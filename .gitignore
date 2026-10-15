@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+passwords.csv
+results.json
+results.lock
+submissions/
+runtime/
