@@ -1,4 +1,5 @@
 import http.client
+from contextlib import contextmanager
 import importlib.util
 import json
 import os
@@ -463,7 +464,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(ranked['M11000000']['overall_rank'], 2)
         self.assertEqual(ranked['M11000002']['overall_rank'], 2)
 
-    def test_http_privacy_html_escaping_and_refresh(self):
+    def test_http_privacy_html_escaping_and_live_script(self):
         record = self.upload(name='bad<script>.zip')
         server = lb.make_server(self.board, 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -476,8 +477,12 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertIn('&lt;script&gt;', page)
             self.assertNotIn('<script>', page)
-            self.assertIn('http-equiv="refresh" content="5"', page)
+            self.assertNotIn('http-equiv="refresh"', page)
+            self.assertIn('<script src="/live.js" defer></script>', page)
+            self.assertIn('data-revision="' + self.board.snapshot()['revision'] + '"', page)
             self.assertIn("default-src 'none'", response.getheader('Content-Security-Policy'))
+            self.assertIn("script-src 'self'", response.getheader('Content-Security-Policy'))
+            self.assertIn("connect-src 'self'", response.getheader('Content-Security-Policy'))
             for path in ('/passwords.csv', '/submissions/' + record['id'] + '/record.json', '/../passwords.csv', '/%2e%2e/passwords.csv'):
                 conn.request('GET', path)
                 response = conn.getresponse()
@@ -488,6 +493,14 @@ class IntegrationTests(unittest.TestCase):
             body = response.read().decode()
             self.assertNotIn('PRIVATE_TEST_SECRET', body)
             self.assertEqual(json.loads(body)['schema_version'], 1)
+            conn.request('GET', '/live.js')
+            response = conn.getresponse()
+            self.assertIn('new EventSource(', response.read().decode())
+            self.assertEqual(response.status, 200)
+            conn.request('HEAD', '/events')
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.read(), b'')
             conn.request('HEAD', '/')
             response = conn.getresponse()
             self.assertEqual(response.read(), b'')
@@ -500,6 +513,111 @@ class IntegrationTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join()
+
+    @contextmanager
+    def live_server(self):
+        server = lb.make_server(self.board, 0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield server
+        finally:
+            self.board.stop.set()
+            with self.board.changed:
+                self.board.changed.notify_all()
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    def open_events(self, server, revision='', last_id=None):
+        conn = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=3)
+        conn.request('GET', '/events?since=' + revision, headers={'Last-Event-ID': last_id} if last_id else {})
+        response = conn.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertIn('text/event-stream', response.getheader('Content-Type'))
+        self.assertIsNone(response.getheader('Content-Length'))
+        self.assertEqual(self.read_event(response)['retry'], '2000')
+        return conn, response
+
+    def read_event(self, response):
+        fields = {}
+        while True:
+            line = response.readline().decode('utf-8').rstrip('\r\n')
+            if not line:
+                return fields
+            if not line.startswith(':'):
+                key, value = line.split(':', 1)
+                fields[key] = value.lstrip()
+
+    def test_events_broadcast_to_all_clients_without_blocking_http(self):
+        revision = self.board.snapshot()['revision']
+        with self.live_server() as server:
+            clients = [self.open_events(server, revision) for _ in range(2)]
+            try:
+                self.board.notice('test', '<script>alert("untrusted")</script>')
+                current = self.board.snapshot()['revision']
+                for conn, response in clients:
+                    event = self.read_event(response)
+                    self.assertEqual(event['event'], 'update')
+                    self.assertEqual(event['id'], current)
+                    message = json.loads(event['data'])
+                    self.assertEqual(message['revision'], current)
+                    self.assertIn('&lt;script&gt;', message['html'])
+                    self.assertNotIn('<script>', message['html'])
+                conn = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=2)
+                conn.request('GET', '/results.json')
+                response = conn.getresponse()
+                self.assertEqual(json.loads(response.read().decode())['revision'], current)
+                conn.close()
+            finally:
+                for conn, response in clients:
+                    response.close()
+                    conn.close()
+
+    def test_events_catch_up_after_initial_load_and_reconnect(self):
+        initial = self.board.snapshot()['revision']
+        self.board.notice('test', 'changed before connection')
+        with self.live_server() as server:
+            conn, response = self.open_events(server, initial)
+            first = self.read_event(response)
+            response.close()
+            conn.close()
+            self.assertEqual(first['id'], self.board.snapshot()['revision'])
+            self.board.notice('test', 'changed while disconnected')
+            latest = self.board.snapshot()['revision']
+            conn, response = self.open_events(server, latest, last_id=first['id'])
+            try:
+                event = self.read_event(response)
+                self.assertEqual(event['id'], latest)
+                self.assertIn('changed while disconnected', json.loads(event['data'])['html'])
+            finally:
+                response.close()
+                conn.close()
+
+    def test_idle_state_does_not_publish_and_disk_failure_does_not_notify(self):
+        initial = self.board.snapshot()['revision']
+        self.board.notice('watch', '')
+        self.assertIsNone(self.board.wait_for_update(initial, timeout=0.01))
+        with mock.patch.object(lb, 'atomic_json', side_effect=OSError('disk failure')):
+            with self.assertRaises(OSError):
+                self.board.notice('test', 'must not publish')
+        self.assertEqual(self.board.snapshot()['revision'], initial)
+        self.assertIsNone(self.board.wait_for_update(initial, timeout=0.01))
+        self.board.notice('test', 'persisted update')
+        update = self.board.wait_for_update(initial, timeout=0.01)
+        self.assertEqual(update['revision'], json.loads((self.results / 'results.json').read_text())['revision'])
+
+    def test_waiting_clients_wake_when_service_closes(self):
+        revision = self.board.snapshot()['revision']
+        returned = threading.Event()
+        def wait():
+            self.board.wait_for_update(revision, timeout=30)
+            returned.set()
+        waiter = threading.Thread(target=wait)
+        waiter.start()
+        self.board.close()
+        self.assertTrue(returned.wait(timeout=2))
+        waiter.join(timeout=2)
 
     def test_http_remains_responsive_during_grading(self):
         self.upload()

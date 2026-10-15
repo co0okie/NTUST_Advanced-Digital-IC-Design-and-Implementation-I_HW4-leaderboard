@@ -29,11 +29,12 @@ import uuid
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 POLL_SECONDS = 2
 SETTLE_SECONDS = 6
+SSE_HEARTBEAT_SECONDS = 15
 SIM_TIMEOUT = 15 * 60
 SYN_TIMEOUT = 30 * 60
 MAX_ARCHIVE = 64 * 1024 ** 2
@@ -647,6 +648,7 @@ class Board:
             self.csv_seen = self.csv_revision
             self.csv_issue = None
             self.lock = threading.RLock()
+            self.changed = threading.Condition(self.lock)
             self.stop = threading.Event()
             self.tasks = queue.Queue()
             self.notices = {}
@@ -675,12 +677,16 @@ class Board:
                         self.tasks.put(record['id'])
                     else:
                         record.update(status='interrupted', error_code='INTERRUPTED', message='上次評分中斷，等待重新收件')
-            self._save_locked()
+            with self.lock:
+                self._save_locked()
         except Exception:
             self.lock_handle.close()
             raise
 
     def close(self):
+        self.stop.set()
+        with self.changed:
+            self.changed.notify_all()
         self.lock_handle.close()
 
     def _payload_locked(self):
@@ -695,12 +701,23 @@ class Board:
                 'rankings': ranking, 'history': copy.deepcopy(self.history)}
 
     def _save_locked(self):
-        self.payload = self._payload_locked()
-        atomic_json(self.json_dir / 'results.json', self.payload)
+        payload = self._payload_locked()
+        payload['revision'] = uuid.uuid4().hex
+        atomic_json(self.json_dir / 'results.json', payload)
+        self.payload = payload
+        self.changed.notify_all()
 
     def snapshot(self):
         with self.lock:
             return copy.deepcopy(self.payload)
+
+    def wait_for_update(self, revision, timeout=SSE_HEARTBEAT_SECONDS):
+        with self.changed:
+            self.changed.wait_for(lambda: self.stop.is_set() or self.payload['revision'] != revision,
+                                  timeout=timeout)
+            if not self.stop.is_set() and self.payload['revision'] != revision:
+                return copy.deepcopy(self.payload)
+        return None
 
     def update(self, job_id, **values):
         with self.lock:
@@ -981,14 +998,14 @@ def rank_card(kind, records):
             student += '<span class="sub">面積 #{} · 速度 #{}</span>'.format(record['area_rank'], record['speed_rank'])
             value = '<span class="score">{}</span>'.format(record['rank_sum'])
         rows.append('<tr><td class="number">{}</td><td class="student">{}</td><td class="number">{}</td></tr>'.format(record[key], student, value))
-    body = ('<div class="table-scroll"><table class="rank-table"><caption class="sr-only">' + title
+    body = ('<div class="table-scroll" data-scroll="' + kind + '"><table class="rank-table"><caption class="sr-only">' + title
             + '</caption><thead><tr><th>排名</th><th>學號</th><th>' + heading
             + '</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>') if rows else '<div class="empty">等待第一筆通過的成績</div>'
     return ('<section class="card ' + ('featured' if kind == 'overall' else '') + '"><div class="card-head"><span class="index">'
             + index + '</span><h2>' + title + '</h2><p>' + description + '</p></div>' + body + '</section>')
 
 
-def render_page(data):
+def render_content(data):
     history_rows = []
     for record in reversed(data['history'][-100:]):
         received = record['received_at']
@@ -1012,17 +1029,50 @@ def render_page(data):
                     for key, label, unit in [('ranked', '已入榜', '位同學'), ('submissions', '繳交紀錄', '筆'),
                                              ('running', '處理中', '筆'), ('queued', '等待評分', '筆')])
     notice = '<div class="notice" role="status">' + escaped(data['notice']) + '</div>' if data.get('notice') else ''
-    return ('<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<meta http-equiv="refresh" content="5"><title>HW4 即時排行榜 · NTUST</title><style>' + CSS + '</style></head><body><main class="wrap">'
-            '<header><div><div class="eyebrow">NTUST / Advanced Digital IC Design</div><h1>HW4 <span>／</span> 即時排行榜</h1>'
-            '<p class="intro">BloodMNIST CNN 硬體實作 · 公開測資排行榜</p></div><div class="live"><span class="dot"></span>每 5 秒自動更新'
+    return ('<header><div><div class="eyebrow">NTUST / Advanced Digital IC Design</div><h1>HW4 <span>／</span> 即時排行榜</h1>'
+            '<p class="intro">BloodMNIST CNN 硬體實作 · 公開測資排行榜</p></div><div class="live"><span class="dot"></span>'
+            '<span id="live-status" role="status">即時更新連線中</span>'
             '<br>資料更新 ' + escaped(data['updated_at'][11:19]) + ' · UTC+8</div></header>' + notice
             + '<div class="stats">' + stats + '</div><div class="boards">'
             + ''.join(rank_card(k, data['rankings']) for k in ('area', 'overall', 'speed')) + '</div>'
             '<p class="explain">每位同學採最近一次成功成績；面積與速度同分共用名次（1、1、3）。需公開測資 8/8 與合成皆通過才入榜。</p>'
             '<div class="history-head"><h2>繳交紀錄</h2><p>最新 100 筆 · 失敗繳交不覆蓋上一筆成功成績</p></div>'
-            '<section class="card history" id="history">' + history + '</section><footer class="footer">'
-            '<span>此排行不包含隱藏測資，非官方最終成績。</span><span>固定模擬時脈 100 MHz · 名次越小越好</span></footer></main></body></html>')
+            '<section class="card history" id="history" data-scroll="history">' + history + '</section><footer class="footer">'
+            '<span>此排行不包含隱藏測資，非官方最終成績。</span><span>固定模擬時脈 100 MHz · 名次越小越好</span></footer>')
+
+
+def render_page(data):
+    return ('<!doctype html><html lang="zh-Hant" data-revision="' + escaped(data.get('revision', ''))
+            + '"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>HW4 即時排行榜 · NTUST</title><style>' + CSS + '</style><script src="/live.js" defer></script></head>'
+            '<body><noscript><p class="notice">啟用 JavaScript 即可即時更新；目前可手動重新整理查看最新資料。</p></noscript>'
+            '<main class="wrap">' + render_content(data) + '</main></body></html>')
+
+
+LIVE_JS = """'use strict';
+(() => {
+  const source = new EventSource('/events?since=' + encodeURIComponent(document.documentElement.dataset.revision));
+  const status = text => { document.getElementById('live-status').textContent = text; };
+  source.onopen = () => status('即時連線 · 資料變更時更新');
+  source.onerror = () => status('連線中斷，正在重新連線…');
+  source.addEventListener('update', event => {
+    const data = JSON.parse(event.data);
+    const main = document.querySelector('main');
+    const scroll = Array.from(main.querySelectorAll('[data-scroll]'), node => ({
+      key: node.dataset.scroll, left: node.scrollLeft, top: node.scrollTop
+    }));
+    const x = window.scrollX, y = window.scrollY;
+    main.innerHTML = data.html;
+    document.documentElement.dataset.revision = data.revision;
+    scroll.forEach(position => {
+      const node = main.querySelector('[data-scroll="' + position.key + '"]');
+      if (node) { node.scrollLeft = position.left; node.scrollTop = position.top; }
+    });
+    window.scrollTo(x, y);
+    status('即時連線 · 資料變更時更新');
+  });
+})();
+"""
 
 
 class LeaderboardServer(ThreadingMixIn, HTTPServer):
@@ -1034,9 +1084,20 @@ def make_server(board, port=8000):
     class Handler(BaseHTTPRequestHandler):
         def respond(self, head=False):
             try:
-                path = urlsplit(self.path).path
+                url = urlsplit(self.path)
+                path = url.path
             except ValueError:
                 path = ''
+            if path == '/events':
+                if head:
+                    self.send_bytes(200, b'', 'text/event-stream; charset=utf-8', head=True)
+                else:
+                    since = parse_qs(url.query).get('since', [''])[0]
+                    self.send_events(self.headers.get('Last-Event-ID') or since)
+                return
+            if path == '/live.js':
+                self.send_bytes(200, LIVE_JS.encode('utf-8'), 'text/javascript; charset=utf-8', head)
+                return
             if path not in ('/', '/results.json'):
                 self.send_bytes(404, b'Not found\n', 'text/plain; charset=utf-8', head)
                 return
@@ -1054,15 +1115,43 @@ def make_server(board, port=8000):
             self.send_header('Content-Type', kind)
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-store')
-            self.send_header('X-Content-Type-Options', 'nosniff')
-            self.send_header('X-Frame-Options', 'DENY')
-            self.send_header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+            self.security_headers()
             self.end_headers()
             if not head:
                 try:
                     self.wfile.write(body)
                 except (BrokenPipeError, ConnectionResetError):
                     pass
+
+        def security_headers(self):
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('X-Frame-Options', 'DENY')
+            self.send_header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+
+        def send_events(self, revision):
+            self.connection.settimeout(10)
+            try:
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Accel-Buffering', 'no')
+                self.security_headers()
+                self.end_headers()
+                self.wfile.write(b'retry: 2000\n: connected\n\n')
+                self.wfile.flush()
+                while not board.stop.is_set():
+                    data = board.wait_for_update(revision)
+                    if board.stop.is_set():
+                        break
+                    if data is None:
+                        self.wfile.write(b': keepalive\n\n')
+                    else:
+                        revision = data['revision']
+                        message = json.dumps({'revision': revision, 'html': render_content(data)}, ensure_ascii=False)
+                        self.wfile.write(('id: ' + revision + '\nevent: update\ndata: ' + message + '\n\n').encode('utf-8'))
+                    self.wfile.flush()
+            except OSError:
+                pass  # Disconnects and slow readers release their handler thread.
 
         def do_GET(self):
             self.respond()

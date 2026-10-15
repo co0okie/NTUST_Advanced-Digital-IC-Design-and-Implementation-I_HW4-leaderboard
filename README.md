@@ -1,7 +1,7 @@
 # HW4 即時排行榜
 
 單一 Python 程式，包含目錄監看、ZIP 驗證、VCS/DC 評分、JSON 紀錄及暗色網頁。
-Python **3.6.8 以上**，僅標準函式庫，不用安裝套件，不需要額外 HTML 或 JS。
+Python **3.6.8 以上**，僅標準函式庫，不用安裝套件。HTML 與少量 JavaScript 都由同一個 `.py` 提供。
 
 ## 啟動
 
@@ -11,7 +11,12 @@ python3 leaderboard.py --watch-dir /path/to/submissions --password-csv /path/to/
 ```
 
 在 **server 的瀏覽器**開啟 <http://127.0.0.1:8000/>。`localhost` 是瀏覽器所在的機器；
-本機瀏覽器若要連 server，需要適當的轉送。網頁每 5 秒更新，目錄每 2 秒掃描。
+本機瀏覽器若要連 server，需要適當的轉送。繳交目錄每 2 秒掃描；網頁採 SSE 推送，不定時重新整理。
+
+程式成功寫入 `results.json` 後通知已連線的瀏覽器；瀏覽器只更新畫面內容並保留捲動位置。
+資料沒有改變就不更新。連線每 15 秒送一次很小的保活註解，不讀取 JSON、不重繪頁面；
+連線中斷時瀏覽器會自動重連，並取得最新版本。關閉 JavaScript 時仍可查看初始畫面及手動重新整理。
+使用瀏覽器內建的 [Server-Sent Events / EventSource](https://html.spec.whatwg.org/multipage/server-sent-events.html)，不需要 WebSocket 套件。
 
 | 參數 | 用途／預設值 |
 | --- | --- |
@@ -34,6 +39,33 @@ python3 leaderboard.py \
 
 JSON 目錄必須由執行帳號擁有，且不可讓群組／其他帳號寫入。程式會建立它。
 按 Ctrl+C 或傳送 SIGTERM 停止；下次啟動會恢復尚有私有 ZIP 快照的未完成工作。
+
+## 正式執行的資料與 log
+
+`browser.log` 是開發時啟動瀏覽器的重導向輸出，正式使用不需要。
+程式本身輸出到終端機，不會自動產生 `service.log`。需要背景執行並保存輸出時，可使用：
+
+```sh
+mkdir -p runtime/logs
+nohup python3 leaderboard.py \
+  --watch-dir /path/to/submissions \
+  --password-csv /path/to/passwords.csv \
+  --json-dir runtime/data \
+  > runtime/logs/service.log 2>&1 &
+```
+
+```text
+runtime/
+  logs/service.log
+  data/
+    results.json
+    results.lock
+    submissions/
+```
+
+`results.lock` 透過作業系統的 `flock` 防止兩個程序同時修改同一個 JSON 目錄。
+關閉程式或程序結束時鎖定自動釋放；空的 lock 檔會保留，檔案存在不代表服務仍在執行。
+若省略 `--json-dir`，為維持原有介面，相同資料仍預設放在 `.py` 旁。
 
 ## 官方資源與評分環境
 
@@ -158,4 +190,4 @@ python3 -m unittest discover -s leaderboard/tests -v
 測試使用 `tb/` 內的原始資料，官方 Tcl／工具輸出以測試 fixture 代替，不會呼叫課程 server 或改動原測資。
 `tests/fixtures/encrypted.zip` 為合成測試資料，密碼是 `test-password`，用來實測傳統 ZIP 加密。
 已在課程 server 使用初版 CNN 驗證真實 VCS、TSMC SRAM model、DC、報告解析、排名與缺檔錯誤流程。
-排行榜的 40 項測試也已在 Python 3.6.8 通過；完整 RTL 驗證結果見 [專案說明](../README.md)。
+排行榜測試也已在 Python 3.6.8 通過，包含 SSE 多人連線、斷線補資料及私有檔案存取檢查；完整 RTL 驗證結果見 [專案說明](../README.md)。
