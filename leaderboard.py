@@ -46,9 +46,62 @@ MAX_WORK = 2 * 1024 ** 3
 FORM_URL = ('https://docs.google.com/forms/d/'
             '1jq-yWiDyvKFq7BkWWeoQiMRwzw4Olf4rNqgk33RFRC8/viewform')
 TAIPEI = datetime.timezone(datetime.timedelta(hours=8))
-STUDENT = re.compile(r'M[0-9]{8}\Z', re.ASCII)
-FILENAME = re.compile(r'(M[0-9]{8})\.zip\Z', re.ASCII)
-JOB_ID = re.compile(r'[0-9]{8}_[0-9]{6}_[0-9]{6}_(?:M[0-9]{8}|UNKNOWN)_[0-9a-f]{12}\Z')
+STUDENT_ID_PATTERN = r'[BDM][0-9A-Z]{8}'
+STUDENT = re.compile(STUDENT_ID_PATTERN + r'\Z', re.ASCII)
+FILENAME = re.compile('(' + STUDENT_ID_PATTERN + r')\.zip\Z', re.ASCII)
+JOB_ID = re.compile(r'[0-9]{8}_[0-9]{6}_[0-9]{6}_(?:' + STUDENT_ID_PATTERN + r'|UNKNOWN)_[0-9a-f]{12}\Z')
+# Class roster embedded from name2id2user; no external roster is needed at runtime.
+STUDENT_NAMES = {
+    'B11207001': '蔡安皓',
+    'B11207012': '黃品堯',
+    'B11207050': '王俞哲',
+    'B11207137': '蔡詣辰',
+    'B11207139': '陳晏齊',
+    'B11232009': '胡守曾',
+    'B11232012': '孫靖傑',
+    'D11407804': 'PHAN MINH ANH',
+    'M11402176': '賴敬予',
+    'M11407320': '丁泓文',
+    'M11407438': '彭弼暉',
+    'M11407439': '林明宏',
+    'M11407440': '李勁磊',
+    'M11415113': '羅君瑜',
+    'M11452035': '劉柏劭',
+    'M11454005': '孔恩亞',
+    'M11454011': '吳昱嫺',
+    'M11454015': '胡培詰',
+    'M11454028': '黃聿萌',
+    'M11454030': '劉武杰',
+    'M11507401': '李品翰',
+    'M11507402': '潘郁辰',
+    'M11507403': '黃敏聖',
+    'M11507406': '羅曜安',
+    'M11507407': '丁奕凱',
+    'M11507408': '張哲瑋',
+    'M11507409': '丁沐恩',
+    'M11507411': '洪承佑',
+    'M11507413': '施柏丞',
+    'M11507416': '施博允',
+    'M11507418': '王家磊',
+    'M11507419': '林柏佑',
+    'M11507420': '陳可維',
+    'M11507421': '葉奕宏',
+    'M11507424': '黃堃容',
+    'M11507426': '紀凱瀚',
+    'M11507427': '游騰楓',
+    'M11507430': '陳致詠',
+    'M11507432': '巫煊崴',
+    'M11507433': '邵柏凱',
+    'M11507434': '江柏宏',
+    'M11507611': '吳家榕',
+    'M11507618': '湯光鈞',
+    'M11507W01': '余芃節',
+    'M11515013': '徐柏揚',
+    'M11554001': '林玟瑄',
+    'M11554029': '江庭宇',
+    'M11554014': '石柏億',
+}
+
 REQUIRED = ('RTL_code/cnn_top.v', 'syn/syn.tcl', 'tb/rtl_sim.f', 'tb/setting.vh')
 WEIGHTS = {'conv1_w': 600, 'conv2_w': 3200, 'fc1_w': 8192, 'fc2_w': 256,
            'conv1_b': 8, 'conv2_b': 16, 'fc1_b': 32, 'fc2_b': 8}
@@ -969,12 +1022,12 @@ a{color:var(--accent);text-underline-offset:4px}a:focus-visible{outline:2px soli
 header{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:28px}h1{font-size:32px;letter-spacing:-.04em;margin:9px 0 5px;font-weight:600}h1 span{color:var(--muted);font-weight:400}
 .intro,.muted{color:var(--muted)}.intro{margin:0;font-size:13px}
 .boards{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:16px;align-items:start}.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}.featured{border-color:#486357;background:#1b2324}.card-head{padding:22px 22px 17px;border-bottom:1px solid var(--border)}.card-head h2{font-size:17px;margin:0;font-weight:600;letter-spacing:.06em}.featured .card-head h2{color:var(--accent)}
-.table-scroll{max-height:540px;overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}th{font-size:11px;color:var(--muted);font-weight:500;white-space:nowrap}th,td{padding:14px 18px;border-bottom:1px solid var(--border)}tbody tr:last-child td{border-bottom:0}.rank-table th:last-child,.rank-table td:last-child{text-align:right}.rank-table td:first-child{width:43px;color:var(--muted)}.rank-table tbody tr:first-child td:first-child{color:var(--accent)}.student,.number{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-variant-numeric:tabular-nums}.student{font-size:12px;white-space:nowrap}.number{white-space:nowrap}.sub{display:block;color:var(--muted);font-size:10px;margin-top:3px;font-family:inherit}.score{font-size:20px;color:var(--accent)}.empty{padding:42px 22px;color:var(--muted);text-align:center;font-size:13px}
+.table-scroll{max-height:540px;overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}th{font-size:11px;color:var(--muted);font-weight:500;white-space:nowrap}th,td{padding:14px 18px;border-bottom:1px solid var(--border)}tbody tr:last-child td{border-bottom:0}.rank-table th:last-child,.rank-table td:last-child{text-align:right}.rank-table td:first-child{width:43px;color:var(--muted)}.rank-table tbody tr:first-child td:first-child{color:var(--accent)}.student,.number{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-variant-numeric:tabular-nums}.student{font-size:12px;white-space:nowrap}.name,.number{white-space:nowrap}.sub{display:block;color:var(--muted);font-size:10px;margin-top:3px;font-family:inherit}.score{font-size:20px;color:var(--accent)}.empty{padding:42px 22px;color:var(--muted);text-align:center;font-size:13px}
 .explain{color:var(--muted);font-size:12px;margin:18px 0 36px;padding-left:2px}.history-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:14px}.history-head h2{font-size:18px;font-weight:500;margin:0}.history-head p{font-size:12px;color:var(--muted);margin:0}.history{overflow:auto}.history table{min-width:900px}.history td{vertical-align:top}.history td:last-child{max-width:530px;min-width:250px;overflow-wrap:anywhere}.when{white-space:nowrap;font-size:12px;color:var(--muted)}.badge{display:inline-block;font-size:11px;padding:3px 8px;border:1px solid #48505e;border-radius:5px;white-space:nowrap;color:#c4ccd8}.badge.success{color:var(--accent);border-color:#436655;background:#243b31}.badge.error,.badge.interrupted{color:#f0aaa8;border-color:#694442;background:#3b2728}.badge.simulating,.badge.synthesizing,.badge.validating{color:#e6cc94;border-color:#665a40}.message{font-size:12px}
 .notice{padding:14px 18px;border:1px solid #756346;background:#302a21;border-radius:8px;color:#e9d4aa;margin:0 0 24px;font-size:13px}.footer{display:flex;justify-content:space-between;gap:18px;margin-top:24px;color:var(--muted);font-size:11px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
-@media(min-width:1100px){.rank-table th,.rank-table td{padding-left:17px;padding-right:17px}}
-@media(max-width:1050px){.wrap{padding:26px 22px}.boards{grid-template-columns:1fr 1.2fr 1fr;gap:10px}.card-head{padding:17px 13px}.rank-table th,.rank-table td{padding:12px 9px}.student{font-size:11px}}
-@media(max-width:760px){.wrap{padding:24px 16px}header{display:block}h1{font-size:28px}.boards{grid-template-columns:1fr;gap:16px}.card-head{padding:19px}.rank-table th,.rank-table td{padding:14px 19px}.student{font-size:13px}.table-scroll{max-height:380px}.history-head,.footer{display:block}.history-head p{margin-top:4px}.footer span{display:block;margin:5px 0}}
+@media(min-width:1100px){.rank-table th,.rank-table td{padding-left:12px;padding-right:12px}}
+@media(max-width:1100px){.wrap{padding:26px 22px}.boards{grid-template-columns:1fr;gap:16px}.card-head{padding:17px 13px}.rank-table th,.rank-table td{padding:12px 9px}}
+@media(max-width:760px){.wrap{padding:24px 16px}header{display:block}h1{font-size:28px}.boards{grid-template-columns:1fr;gap:16px}.card-head{padding:19px}.rank-table th,.rank-table td{padding:14px 8px}.student,.name{font-size:12px}.table-scroll{max-height:380px}.history-head,.footer{display:block}.history-head p{margin-top:4px}.footer span{display:block;margin:5px 0}}
 """
 
 
@@ -995,6 +1048,7 @@ def rank_card(kind, records):
     rows = []
     for record in sorted(records, key=lambda r: (r[key], r['student_id'])):
         student = escaped(record['student_id'])
+        name = escaped(STUDENT_NAMES.get(record['student_id'], '—'))
         if kind == 'area':
             value = formatted(record['area'], 3)
         elif kind == 'speed':
@@ -1002,9 +1056,9 @@ def rank_card(kind, records):
         else:
             student += '<span class="sub">面積 #{} · 速度 #{}</span>'.format(record['area_rank'], record['speed_rank'])
             value = '<span class="score">{}</span>'.format(record['rank_sum'])
-        rows.append('<tr><td class="number">{}</td><td class="student">{}</td><td class="number">{}</td></tr>'.format(record[key], student, value))
+        rows.append('<tr><td class="number">{}</td><td class="student">{}</td><td class="name">{}</td><td class="number">{}</td></tr>'.format(record[key], student, name, value))
     body = ('<div class="table-scroll" data-scroll="' + kind + '"><table class="rank-table"><caption class="sr-only">' + title
-            + '</caption><thead><tr><th>排名</th><th>學號</th><th>' + heading
+            + '</caption><thead><tr><th>排名</th><th>學號</th><th>名稱</th><th>' + heading
             + '</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>') if rows else '<div class="empty">等待第一筆通過的成績</div>'
     return ('<section class="card ' + ('featured' if kind == 'overall' else '') + '"><div class="card-head"><h2>'
             + title + '</h2></div>' + body + '</section>')

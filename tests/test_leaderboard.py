@@ -416,6 +416,24 @@ class IntegrationTests(unittest.TestCase):
         record = self.grade_next()
         self.assertEqual(record['status'], 'success')
 
+    def test_class_roster_ids_survive_csv_collection_and_restart(self):
+        students = sorted(lb.STUDENT_NAMES)
+        self.csv.write_text('學號,密碼\n' + ''.join(student + ',fixture-password\n' for student in students), encoding='utf-8')
+        passwords, unused = lb.read_passwords(self.csv)
+        self.assertEqual(set(passwords), set(students))
+        for student in students:
+            self.assertTrue(lb.FILENAME.fullmatch(student + '.zip'), student)
+        selected = ('B11207001', 'D11407804', 'M11507W01', 'M11507401')
+        for student in selected:
+            self.upload(name=student + '.zip')
+            record = self.grade_next()
+            self.assertEqual(record['status'], 'success', record)
+            self.assertEqual(record['student_id'], student)
+            self.assertTrue(lb.JOB_ID.fullmatch(record['id']))
+        self.board.close()
+        self.board = lb.Board(self.incoming, self.csv, self.results, self.course)
+        self.assertEqual({r['student_id'] for r in self.board.snapshot()['rankings']}, set(selected))
+
     def test_zero_error_synthesis_is_ranked(self):
         class ZeroErrorRunner(FakeRunner):
             def run(self, phase, cwd, log_path, stop):
