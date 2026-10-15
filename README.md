@@ -156,6 +156,9 @@ JSON 記錄 server 觀察到的收件時間（UTC+8）、檔案擁有者、ZIP �
 學號來自檔名，**不等同驗證過的身分**；檔案擁有者另列出供助教追查。
 公開測資通過不代表已通過隱藏測資，也不能證明沒有硬編碼；網站不是官方最終成績。
 
+頁面只顯示 AREA、OVERALL、INTERVAL 三榜與繳交紀錄；收件時間採台北時間。
+等待與處理狀態列在各筆紀錄中，錯誤只顯示說明；診斷代碼仍保留在 JSON。
+
 ```text
 JSON 目錄/
   results.json                       # 原子更新，644；全部紀錄與排名
@@ -191,3 +194,25 @@ python3 -m unittest discover -s leaderboard/tests -v
 `tests/fixtures/encrypted.zip` 為合成測試資料，密碼是 `test-password`，用來實測傳統 ZIP 加密。
 已在課程 server 使用初版 CNN 驗證真實 VCS、TSMC SRAM model、DC、報告解析、排名與缺檔錯誤流程。
 排行榜測試也已在 Python 3.6.8 通過，包含 SSE 多人連線、斷線補資料及私有檔案存取檢查；完整 RTL 驗證結果見 [專案說明](../README.md)。
+
+另可產生 36 筆刻意錯誤的繳交，供自己的測試目錄驗證完整收件流程：
+
+```sh
+python3 leaderboard/tests/make_error_cases.py dist/M11000001.zip build/leaderboard-error-cases
+```
+
+輸出目錄必須尚未存在；`incoming/` 是測試 ZIP，`manifest.json` 列出預期錯誤，
+`passwords.csv` 是兩筆假密碼（權限 600）。涵蓋缺檔、格式、損毀、加密、路徑、解壓限制、
+腳本修改、RTL 清單、編碼、編譯失敗、分類錯誤及 testbench 逾時。
+**僅用於私人測試目錄，勿交到全班的正式收件目錄。** 這個工具不會自動提交或執行 VCS/DC。
+
+2026-10-16 已在課程 server 的私人排行榜實際提交這 36 筆 ZIP，另測試兩筆以符號連結／目錄
+冒充 ZIP 的情境；修正分類後，38/38 的錯誤碼符合預期。語法錯誤、分類錯誤與無輸出案例
+使用真正 VCS 執行；等待／處理狀態透過 SSE 正常送出。失敗不影響原成功排名，工作檔及 ZIP
+快照皆清除，原始繳交檔與可用診斷紀錄保留。
+
+這批測試找出工具分類問題：登入環境的無關 `INNOVUS` 目錄缺失警告會遮蔽後續語法錯誤。
+現在只針對評分工具不存在或授權失敗判定環境問題；一般編譯失敗保持 `TOOL_FAILED`。
+回歸測試已涵蓋這種 log，以及真正的工具缺失和授權失敗。
+45 項本機測試在 Python 3.6.8 與 3.14 通過；合成失敗判斷與工具逾時另由本機測試驗證，
+未在課程 server 刻意製造授權故障或長時間逾時。

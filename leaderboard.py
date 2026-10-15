@@ -54,8 +54,8 @@ WEIGHTS = {'conv1_w': 600, 'conv2_w': 3200, 'fc1_w': 8192, 'fc2_w': 256,
            'conv1_b': 8, 'conv2_b': 16, 'fc1_b': 32, 'fc2_b': 8}
 ACTIVE = {'queued', 'validating', 'simulating', 'synthesizing'}
 PASSWORD_ERRORS = {'PASSWORD_MISSING', 'DECRYPT_FAILED', 'CSV_ERROR'}
-STATUS_TEXT = {'queued': '等待評分', 'validating': '檢查檔案', 'simulating': '模擬中',
-               'synthesizing': '合成中', 'success': '通過', 'error': '失敗',
+STATUS_TEXT = {'queued': '等待評分', 'validating': '處理中', 'simulating': '處理中',
+               'synthesizing': '處理中', 'success': '通過', 'error': '失敗',
                'interrupted': '已中斷'}
 
 
@@ -564,7 +564,13 @@ class ToolRunner:
                     raise Issue('RESOURCE_LIMIT', '工具 log 超過 16 MiB')
                 if process.returncode:
                     message = log_path.read_text(encoding='utf-8', errors='replace')[:MAX_LOG]
-                    if re.search(r'(?:Command not found|command not found|No such file|license.*(?:fail|denied))', message, re.I):
+                    # Login startup may report unrelated missing EDA directories
+                    # before VCS successfully starts. Those lines must not hide
+                    # the actual compiler error later in the log.
+                    missing_tool = re.search(r'^\s*(?:\S*/)?(?:vcs|dc_shell|tcsh):\s*(?:Command not found|No such file)',
+                                             message, re.I | re.M)
+                    license_failure = re.search(r'license.*(?:fail|denied)|(?:fail|unable|cannot).*license', message, re.I)
+                    if missing_tool or license_failure:
                         raise Issue('ENVIRONMENT', '評分工具、授權或官方路徑無法使用，請助教查看 log')
                     raise Issue('TOOL_FAILED', '評分工具結束碼為 {}，請查看 {}'.format(process.returncode, log_path.name))
             finally:
@@ -961,15 +967,14 @@ CSS = """
 a{color:var(--accent);text-underline-offset:4px}a:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
 .wrap{max-width:1520px;margin:auto;padding:38px 40px 30px}.eyebrow{color:var(--muted);font-size:11px;letter-spacing:.19em;text-transform:uppercase}
 header{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:28px}h1{font-size:32px;letter-spacing:-.04em;margin:9px 0 5px;font-weight:600}h1 span{color:var(--muted);font-weight:400}
-.intro,.muted{color:var(--muted)}.intro{margin:0;font-size:13px}.live{white-space:nowrap;text-align:right;font-size:12px;color:var(--muted)}.dot{display:inline-block;width:6px;height:6px;background:var(--accent);border-radius:50%;margin:0 7px 1px 0}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:30px;padding:20px 0}.stat{padding-left:24px;border-left:1px solid var(--border)}.stat:first-child{padding-left:0;border:0}.stat small{display:block;color:var(--muted);font-size:12px}.stat strong{font:500 28px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.stat em{font-size:11px;color:var(--muted);font-style:normal;margin-left:8px}
-.boards{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:16px;align-items:start}.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}.featured{border-color:#486357;background:#1b2324}.card-head{padding:22px 22px 17px;border-bottom:1px solid var(--border)}.card-head h2{font-size:17px;margin:5px 0 3px;font-weight:600}.card-head p{margin:0;color:var(--muted);font-size:12px}.index{font:11px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;color:var(--muted)}.featured .index{color:var(--accent)}
+.intro,.muted{color:var(--muted)}.intro{margin:0;font-size:13px}
+.boards{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:16px;align-items:start}.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}.featured{border-color:#486357;background:#1b2324}.card-head{padding:22px 22px 17px;border-bottom:1px solid var(--border)}.card-head h2{font-size:17px;margin:0;font-weight:600;letter-spacing:.06em}.featured .card-head h2{color:var(--accent)}
 .table-scroll{max-height:540px;overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}th{font-size:11px;color:var(--muted);font-weight:500;white-space:nowrap}th,td{padding:14px 18px;border-bottom:1px solid var(--border)}tbody tr:last-child td{border-bottom:0}.rank-table th:last-child,.rank-table td:last-child{text-align:right}.rank-table td:first-child{width:43px;color:var(--muted)}.rank-table tbody tr:first-child td:first-child{color:var(--accent)}.student,.number{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-variant-numeric:tabular-nums}.student{font-size:12px;white-space:nowrap}.number{white-space:nowrap}.sub{display:block;color:var(--muted);font-size:10px;margin-top:3px;font-family:inherit}.score{font-size:20px;color:var(--accent)}.empty{padding:42px 22px;color:var(--muted);text-align:center;font-size:13px}
-.explain{color:var(--muted);font-size:12px;margin:18px 0 36px;padding-left:2px}.history-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:14px}.history-head h2{font-size:18px;font-weight:500;margin:0}.history-head p{font-size:12px;color:var(--muted);margin:0}.history{overflow:auto}.history table{min-width:900px}.history td{vertical-align:top}.history td:last-child{max-width:530px;min-width:250px;overflow-wrap:anywhere}.when{white-space:nowrap;font-size:12px;color:var(--muted)}.badge{display:inline-block;font-size:11px;padding:3px 8px;border:1px solid #48505e;border-radius:5px;white-space:nowrap;color:#c4ccd8}.badge.success{color:var(--accent);border-color:#436655;background:#243b31}.badge.error,.badge.interrupted{color:#f0aaa8;border-color:#694442;background:#3b2728}.badge.simulating,.badge.synthesizing,.badge.validating{color:#e6cc94;border-color:#665a40}.message{font-size:12px}.error-code{display:block;color:var(--muted);font:10px ui-monospace,SFMono-Regular,Consolas,monospace;margin-top:4px}
+.explain{color:var(--muted);font-size:12px;margin:18px 0 36px;padding-left:2px}.history-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:14px}.history-head h2{font-size:18px;font-weight:500;margin:0}.history-head p{font-size:12px;color:var(--muted);margin:0}.history{overflow:auto}.history table{min-width:900px}.history td{vertical-align:top}.history td:last-child{max-width:530px;min-width:250px;overflow-wrap:anywhere}.when{white-space:nowrap;font-size:12px;color:var(--muted)}.badge{display:inline-block;font-size:11px;padding:3px 8px;border:1px solid #48505e;border-radius:5px;white-space:nowrap;color:#c4ccd8}.badge.success{color:var(--accent);border-color:#436655;background:#243b31}.badge.error,.badge.interrupted{color:#f0aaa8;border-color:#694442;background:#3b2728}.badge.simulating,.badge.synthesizing,.badge.validating{color:#e6cc94;border-color:#665a40}.message{font-size:12px}
 .notice{padding:14px 18px;border:1px solid #756346;background:#302a21;border-radius:8px;color:#e9d4aa;margin:0 0 24px;font-size:13px}.footer{display:flex;justify-content:space-between;gap:18px;margin-top:24px;color:var(--muted);font-size:11px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
 @media(min-width:1100px){.rank-table th,.rank-table td{padding-left:17px;padding-right:17px}}
 @media(max-width:1050px){.wrap{padding:26px 22px}.boards{grid-template-columns:1fr 1.2fr 1fr;gap:10px}.card-head{padding:17px 13px}.rank-table th,.rank-table td{padding:12px 9px}.student{font-size:11px}}
-@media(max-width:760px){.wrap{padding:24px 16px}header{display:block}h1{font-size:28px}.live{text-align:left;margin-top:15px}.stats{margin-top:22px;gap:14px;padding:16px 0}.stat{padding-left:12px}.stat strong{font-size:23px}.stat em{display:none}.boards{grid-template-columns:1fr;gap:16px}.card-head{padding:19px}.rank-table th,.rank-table td{padding:14px 19px}.student{font-size:13px}.table-scroll{max-height:380px}.history-head,.footer{display:block}.history-head p{margin-top:4px}.footer span{display:block;margin:5px 0}}
+@media(max-width:760px){.wrap{padding:24px 16px}header{display:block}h1{font-size:28px}.boards{grid-template-columns:1fr;gap:16px}.card-head{padding:19px}.rank-table th,.rank-table td{padding:14px 19px}.student{font-size:13px}.table-scroll{max-height:380px}.history-head,.footer{display:block}.history-head p{margin-top:4px}.footer span{display:block;margin:5px 0}}
 """
 
 
@@ -982,10 +987,10 @@ def formatted(value, decimals=0):
 
 
 def rank_card(kind, records):
-    labels = {'area': ('01 / AREA', '面積榜', '總面積越小，名次越前', '面積 · μm²'),
-              'overall': ('02 / OVERALL', '總排名', '面積名次 ＋ 速度名次', '名次總和'),
-              'speed': ('03 / INTERVAL', '速度榜', 'INTERVAL 越小，名次越前', 'INTERVAL · cycles')}
-    index, title, description, heading = labels[kind]
+    labels = {'area': ('AREA', '面積 · μm²'),
+              'overall': ('OVERALL', '名次總和'),
+              'speed': ('INTERVAL', 'INTERVAL · cycles')}
+    title, heading = labels[kind]
     key = {'area': 'area_rank', 'overall': 'overall_rank', 'speed': 'speed_rank'}[kind]
     rows = []
     for record in sorted(records, key=lambda r: (r[key], r['student_id'])):
@@ -1001,8 +1006,8 @@ def rank_card(kind, records):
     body = ('<div class="table-scroll" data-scroll="' + kind + '"><table class="rank-table"><caption class="sr-only">' + title
             + '</caption><thead><tr><th>排名</th><th>學號</th><th>' + heading
             + '</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>') if rows else '<div class="empty">等待第一筆通過的成績</div>'
-    return ('<section class="card ' + ('featured' if kind == 'overall' else '') + '"><div class="card-head"><span class="index">'
-            + index + '</span><h2>' + title + '</h2><p>' + description + '</p></div>' + body + '</section>')
+    return ('<section class="card ' + ('featured' if kind == 'overall' else '') + '"><div class="card-head"><h2>'
+            + title + '</h2></div>' + body + '</section>')
 
 
 def render_content(data):
@@ -1014,31 +1019,23 @@ def render_content(data):
         message = escaped(record.get('message', ''))
         if record.get('error_code') in PASSWORD_ERRORS:
             message += ' <a href="' + FORM_URL + '" target="_blank" rel="noopener noreferrer">確認密碼表單 ↗</a>'
-        if record.get('error_code'):
-            message += '<span class="error-code">' + escaped(record['error_code']) + '</span>'
         history_rows.append('<tr><td class="when" title="{}">{}</td><td class="student">{}<span class="sub">{}</span></td>'
                             '<td><span class="badge {}">{}</span></td><td class="number">{}<span class="sub">{} cycles</span></td>'
                             '<td class="message" title="{}">{}</td></tr>'.format(
                                 escaped(received), escaped(when), escaped(record.get('student_id') or record['filename']),
                                 escaped(record.get('uploader', '')), escaped(state), escaped(STATUS_TEXT.get(state, state)),
                                 formatted(record.get('area'), 3), formatted(record.get('interval')), escaped(record['id']), message))
-    history = ('<table><caption class="sr-only">最新 100 筆繳交紀錄</caption><thead><tr><th>收件時間 · 台北</th><th>學號 / 檔案擁有者</th>'
+    history = ('<table><caption class="sr-only">最新 100 筆繳交紀錄</caption><thead><tr><th>收件時間</th><th>學號 / 檔案擁有者</th>'
                '<th>狀態</th><th>面積 / INTERVAL</th><th>說明</th></tr></thead><tbody>' + ''.join(history_rows) + '</tbody></table>') if history_rows else '<div class="empty">尚無繳交紀錄。檔案穩定後將自動開始檢查。</div>'
-    summary = data['summary']
-    stats = ''.join('<div class="stat"><small>{}</small><strong>{}</strong><em>{}</em></div>'.format(label, summary[key], unit)
-                    for key, label, unit in [('ranked', '已入榜', '位同學'), ('submissions', '繳交紀錄', '筆'),
-                                             ('running', '處理中', '筆'), ('queued', '等待評分', '筆')])
     notice = '<div class="notice" role="status">' + escaped(data['notice']) + '</div>' if data.get('notice') else ''
     return ('<header><div><div class="eyebrow">NTUST / Advanced Digital IC Design</div><h1>HW4 <span>／</span> 即時排行榜</h1>'
-            '<p class="intro">BloodMNIST CNN 硬體實作 · 公開測資排行榜</p></div><div class="live"><span class="dot"></span>'
-            '<span id="live-status" role="status">即時更新連線中</span>'
-            '<br>資料更新 ' + escaped(data['updated_at'][11:19]) + ' · UTC+8</div></header>' + notice
-            + '<div class="stats">' + stats + '</div><div class="boards">'
+            '<p class="intro">BloodMNIST CNN 硬體實作 · 公開測資排行榜</p></div></header>' + notice
+            + '<div class="boards">'
             + ''.join(rank_card(k, data['rankings']) for k in ('area', 'overall', 'speed')) + '</div>'
-            '<p class="explain">每位同學採最近一次成功成績；面積與速度同分共用名次（1、1、3）。需公開測資 8/8 與合成皆通過才入榜。</p>'
+            '<p class="explain">總排名依面積名次與速度名次之和計算，同分共用名次（1、1、3）。每位同學採最近一次成功成績，需公開測資 8/8 與合成皆通過才入榜。</p>'
             '<div class="history-head"><h2>繳交紀錄</h2><p>最新 100 筆 · 失敗繳交不覆蓋上一筆成功成績</p></div>'
             '<section class="card history" id="history" data-scroll="history">' + history + '</section><footer class="footer">'
-            '<span>此排行不包含隱藏測資，非官方最終成績。</span><span>固定模擬時脈 100 MHz · 名次越小越好</span></footer>')
+            '<span>此排行不包含隱藏測資，非官方最終成績。</span></footer>')
 
 
 def render_page(data):
@@ -1052,9 +1049,6 @@ def render_page(data):
 LIVE_JS = """'use strict';
 (() => {
   const source = new EventSource('/events?since=' + encodeURIComponent(document.documentElement.dataset.revision));
-  const status = text => { document.getElementById('live-status').textContent = text; };
-  source.onopen = () => status('即時連線 · 資料變更時更新');
-  source.onerror = () => status('連線中斷，正在重新連線…');
   source.addEventListener('update', event => {
     const data = JSON.parse(event.data);
     const main = document.querySelector('main');
@@ -1069,7 +1063,6 @@ LIVE_JS = """'use strict';
       if (node) { node.scrollLeft = position.left; node.scrollTop = position.top; }
     });
     window.scrollTo(x, y);
-    status('即時連線 · 資料變更時更新');
   });
 })();
 """

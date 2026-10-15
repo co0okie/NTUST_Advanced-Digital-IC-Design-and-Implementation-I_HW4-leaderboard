@@ -639,7 +639,7 @@ class IntegrationTests(unittest.TestCase):
             conn.request('GET', '/')
             response = conn.getresponse()
             self.assertEqual(response.status, 200)
-            self.assertIn('模擬中', response.read().decode())
+            self.assertIn('處理中', response.read().decode())
             conn.close()
         finally:
             release.set()
@@ -658,6 +658,23 @@ class IntegrationTests(unittest.TestCase):
             runner.execute([sys.executable, '-c', 'raise SystemExit(7)'], self.root,
                            self.root / 'exit.log', 3, threading.Event())
         self.assertEqual(raised.exception.code, 'TOOL_FAILED')
+
+    def test_startup_warning_does_not_hide_compiler_failure(self):
+        runner = lb.ToolRunner()
+        diagnostics = (
+            ("/bin/ls: cannot access '/unrelated/INNOVUS': No such file or directory\n"
+             "Parsing design file '../RTL_code/cnn_top.v'\nError-[SE] Syntax error\n", 'TOOL_FAILED'),
+            ('vcs: Command not found.\n', 'ENVIRONMENT'),
+            ('dc_shell: No such file or directory\n', 'ENVIRONMENT'),
+            ('License checkout failed.\n', 'ENVIRONMENT'),
+            ('Unable to obtain a license.\n', 'ENVIRONMENT'),
+        )
+        for message, expected in diagnostics:
+            with self.subTest(expected=expected, message=message):
+                command = [sys.executable, '-c', 'import sys; sys.stdout.write({!r}); sys.exit(1)'.format(message)]
+                with self.assertRaises(lb.Issue) as raised:
+                    runner.execute(command, self.root, self.root / 'diagnostic.log', 3, threading.Event())
+                self.assertEqual(raised.exception.code, expected)
 
 
 if __name__ == '__main__':
