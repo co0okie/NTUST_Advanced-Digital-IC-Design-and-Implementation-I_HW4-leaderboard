@@ -165,13 +165,19 @@ class ValidationTests(unittest.TestCase):
         with mock.patch.object(lb, 'MAX_EXPANDED', 20):
             self.assertIssue('ZIP_LIMIT', self.extract, valid_files())
 
-    def test_aes_gets_explicit_message(self):
+    def test_malformed_aes_gets_explicit_message(self):
         path = self.root / 'aes.zip'
         write_zip(path, valid_files())
         raw = bytearray(path.read_bytes())
         struct.pack_into('<H', raw, raw.index(b'PK\x01\x02') + 10, 99)
         path.write_bytes(raw)
         self.assertIssue('UNSUPPORTED_ENCRYPTION', lb.safe_extract, path, self.root / 'aes-out', 'anything')
+
+    def test_missing_libarchive_only_affects_aes(self):
+        with mock.patch.object(lb.ctypes.util, 'find_library', return_value=None):
+            self.assertEqual(set(self.extract(valid_files())), set(lb.REQUIRED))
+            self.assertIssue('ENVIRONMENT', lb.safe_extract, HERE / 'fixtures/aes256.zip',
+                             self.root / 'aes-unavailable', 'test-password')
 
     def test_corrupt_zip(self):
         path = self.root / 'corrupt.zip'
@@ -279,6 +285,92 @@ class ValidationTests(unittest.TestCase):
             self.assertEqual(metrics['area'], 12345.678)
             self.assertEqual(metrics['synthesis_error_count'], count)
         self.assertIssue('SYN_FAILED', lb.parse_synthesis, summary + '\nERROR: link failed\n', AREA, TIMING, LATCH)
+
+
+class AESTests(unittest.TestCase):
+    def setUp(self):
+        try:
+            lb.libarchive_api()
+        except lb.Issue as error:
+            self.skipTest(error.message)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def fixture(self, name='aes256.zip'):
+        return HERE / 'fixtures' / name
+
+    def test_real_aes_strengths_and_both_versions(self):
+        for name in ('aes128.zip', 'aes192.zip', 'aes256.zip', 'aes256-ae1.zip'):
+            with self.subTest(name=name):
+                out = self.root / name
+                self.assertEqual(set(lb.safe_extract(self.fixture(name), out, 'test-password')), set(lb.REQUIRED))
+                for path, text in valid_files().items():
+                    self.assertEqual((out / path).read_text(), text)
+
+    def test_password_errors(self):
+        for index, (password, code) in enumerate(((None, 'PASSWORD_MISSING'), ('incorrect-password', 'DECRYPT_FAILED'),
+                                                  ('test-password\0extra', 'DECRYPT_FAILED'))):
+            with self.subTest(code=code), self.assertRaises(lb.Issue) as raised:
+                lb.safe_extract(self.fixture(), self.root / str(index), password)
+            self.assertEqual(raised.exception.code, code)
+            self.assertNotIn('incorrect-password', raised.exception.message)
+
+    def test_authentication_corruption_and_ae1_crc(self):
+        for name in ('aes256.zip', 'aes256-ae1.zip'):
+            raw = bytearray(self.fixture(name).read_bytes())
+            with zipfile.ZipFile(self.fixture(name)) as archive:
+                item = archive.infolist()[0]
+                if name == 'aes256.zip':
+                    name_size, extra_size = struct.unpack_from('<HH', raw, item.header_offset + 26)
+                    # Flip the last byte of the AES authentication tag.
+                    raw[item.header_offset + 30 + name_size + extra_size + item.compress_size - 1] ^= 1
+                else:
+                    # AE-1 must also reject an incorrect plaintext CRC.
+                    struct.pack_into('<I', raw, item.header_offset + 14, item.CRC ^ 1)
+                    struct.pack_into('<I', raw, archive.start_dir + 16, item.CRC ^ 1)
+            path = self.root / name
+            path.write_bytes(raw)
+            with self.subTest(name=name), self.assertRaises(lb.Issue) as raised:
+                lb.safe_extract(path, self.root / (name + '-out'), 'test-password')
+            self.assertEqual(raised.exception.code, 'DECRYPT_FAILED')
+
+    def test_path_and_limits_are_checked_before_native_decoder(self):
+        raw = self.fixture().read_bytes().replace(b'RTL_code/cnn_top.v', b'../xcode/cnn_top.v')
+        path = self.root / 'unsafe.zip'
+        path.write_bytes(raw)
+        with mock.patch.object(lb, 'extract_aes') as decoder:
+            with self.assertRaises(lb.Issue) as raised:
+                lb.safe_extract(path, self.root / 'unsafe-out', 'test-password')
+            self.assertEqual(raised.exception.code, 'UNSAFE_ZIP')
+            with mock.patch.object(lb, 'MAX_MEMBER', 20), self.assertRaises(lb.Issue) as raised:
+                lb.safe_extract(self.fixture(), self.root / 'large-out', 'test-password')
+            self.assertEqual(raised.exception.code, 'ZIP_LIMIT')
+            decoder.assert_not_called()
+
+    def test_mixed_plaintext_and_aes_with_directories(self):
+        path = self.root / 'mixed.zip'
+        shutil.copyfile(str(self.fixture()), str(path))
+        with zipfile.ZipFile(str(path), 'a') as archive:
+            archive.writestr('RTL_code/extra/', b'')
+            archive.writestr('RTL_code/extra/plain.v', b'module plain; endmodule\n')
+        out = self.root / 'mixed-out'
+        files = lb.safe_extract(path, out, 'test-password')
+        self.assertEqual(set(files), set(lb.REQUIRED) | {'RTL_code/extra/plain.v'})
+        self.assertEqual((out / 'RTL_code/extra/plain.v').read_bytes(), b'module plain; endmodule\n')
+
+    def test_actual_stream_size_is_bounded(self):
+        out = self.root / 'bounded'
+        out.mkdir()
+        with zipfile.ZipFile(self.fixture()) as archive:
+            members = archive.infolist()
+        with mock.patch.object(lb, 'MAX_EXPANDED', 20), self.assertRaises(lb.Issue) as raised:
+            lb.extract_aes(self.fixture(), out, 'test-password', members)
+        self.assertEqual(raised.exception.code, 'ZIP_LIMIT')
+
+    def test_aes_runs_in_bounded_child(self):
+        files = lb.extract_bounded(self.fixture(), self.root / 'child-out', 'test-password')
+        self.assertEqual(set(files), set(lb.REQUIRED))
 
 
 class IntegrationTests(unittest.TestCase):

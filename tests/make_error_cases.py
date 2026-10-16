@@ -73,7 +73,7 @@ def make_cases(baseline, encrypted, output):
     add('夾帶 SRAM 模型', 'INVALID_FORMAT', {'RTL_code/sram.v': 'module fake; endmodule'})
     add('ZIP 損毀', 'DECRYPT_FAILED', raw=b'This is not a ZIP archive.\n')
     raw = zipped(files)
-    add('AES ZIP 方法標記', 'UNSUPPORTED_ENCRYPTION', raw=central_field(raw, 10, '<H', 99))
+    add('只有 AES 方法標記、缺少加密資訊', 'UNSUPPORTED_ENCRYPTION', raw=central_field(raw, 10, '<H', 99))
     add('不支援的壓縮方法', 'UNSUPPORTED_COMPRESSION', raw=central_field(raw, 10, '<H', 98))
     for name in ('../outside.v', '/outside.v', 'RTL_code\\outside.v'):
         add('危險路徑 ' + name, 'UNSAFE_ZIP', {name: 'module fake; endmodule'})

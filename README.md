@@ -1,7 +1,8 @@
 # HW4 即時排行榜
 
 單一 Python 程式，包含目錄監看、ZIP 驗證、VCS/DC 評分、JSON 紀錄及暗色網頁。
-Python **3.6.8 以上**，僅標準函式庫，不用安裝套件。HTML 與少量 JavaScript 都由同一個 `.py` 提供。
+Python **3.6.8 以上**，不需要額外 Python 套件。AES ZIP 透過內建 `ctypes` 使用系統 libarchive；
+課程 server 已有可用的 3.3.3。HTML 與少量 JavaScript 都由同一個 `.py` 提供。
 
 作業 RTL 與原始課程資料位於 [HW4 repo](https://github.com/co0okie/NTUST_Advanced-Digital-IC-Design-and-Implementation-I_HW4)。本 repo 僅包含排行榜與其測試。
 
@@ -119,7 +120,10 @@ CSV 使用 UTF-8，可有 BOM；以欄位名稱讀取，其他 Google 表單欄�
 - 密碼 CSV 必須由執行帳號擁有且權限為 `600`。不放進公開 JSON 或 log。
 - 學號去除前後空白並轉大寫；密碼的空白保留。同學號以 CSV 最後一筆為準。
 - 更新 CSV 後，自動重試最新一筆因密碼缺失／解密失敗而失敗的 ZIP。
-- 未加密 ZIP 不要求出現在密碼 CSV。傳統 ZipCrypto 可用；**AES ZIP 不支援**，也不自動安裝套件。
+- 未加密 ZIP 不要求出現在密碼 CSV。支援傳統 ZipCrypto，以及 WinZip AES AE-1／AE-2 的 128、192、256 位元加密。
+- AES ZIP 使用系統 libarchive，不呼叫 shell、不把密碼放在程序參數，也不自動安裝套件；缺少程式庫時顯示環境錯誤，未加密與 ZipCrypto 不受影響。
+- 解碼前仍驗證完整清單；只讀取 libarchive 的資料串流，由 Python 依已驗證的檔名建立檔案，核對解碼檔名、類型、大小、CRC／AES 驗證碼，並限制實際展開量。仍在原有資源限制的子程序內解壓。
+- AES ZIP 內允許混有未加密檔案。壓縮方法限 stored、deflate、bzip2、LZMA，實際可用性依 libarchive 編譯功能；不宣稱支援所有強式加密、ZIPX、分卷或加密檔名等變體。
 - 解密錯誤附表單填寫連結；表單更新後仍須助教把新的 CSV 放到指定位置。
 
 學號接受 B、D 或 M 開頭，後接 8 個大寫英文字母或數字（包括名單中的 `M11507W01`）；
@@ -202,7 +206,7 @@ python3 -m unittest discover -s tests -v
 ```
 
 測試自行產生圖片、答案、權重及課程腳本 fixture，以測試用工具輸出驗證評分流程；不依賴 HW4 repo，不會呼叫 VCS/DC 或課程 server。
-`tests/fixtures/encrypted.zip` 為合成測試資料，密碼是 `test-password`，用來實測傳統 ZIP 加密。
+`tests/fixtures/` 內的 ZIP 都是合成測試資料，密碼是 `test-password`；涵蓋 ZipCrypto、AES 三種金鑰長度及 AE-1／AE-2。測試不需要 `7z`。若系統沒有可用 libarchive，AES 解密測試會標記略過，其他測試照常執行。
 已在課程 server 使用初版 CNN 驗證真實 VCS、TSMC SRAM model、DC、報告解析、排名與缺檔錯誤流程。
 排行榜測試也已在 Python 3.6.8 通過，包含 SSE 多人連線、斷線補資料及私有檔案存取檢查；完整 RTL 驗證結果見 [HW4 專案說明](https://github.com/co0okie/NTUST_Advanced-Digital-IC-Design-and-Implementation-I_HW4)。
 
@@ -232,3 +236,7 @@ python3 tests/make_error_cases.py /path/to/M11000001.zip build/leaderboard-error
 另新增授權失敗卻回傳 0、以及面積加總與報告不符的回歸測試；48 項在本機通過。
 這些檢查來自一次 server 授權服務中斷的實際 log：DC 印出 `SEC-12` 後仍產生不完整報告，
 該筆已保留診斷與更正紀錄並移出排名。這些檢查不以 `Error` 的數量作為判定門檻。
+
+加入 AES 解密後，56 項測試已在本機與課程 server 的 Python 3.6.8／libarchive 3.3.3 通過，沒有略過項目。
+包含真實 AES-128／192／256、AE-1／AE-2、正確／錯誤密碼、AES 驗證碼與 AE-1 CRC 損壞、
+混合未加密檔案、危險路徑、宣告及實際展開上限，以及受限子程序解碼。

@@ -4,6 +4,8 @@
 import argparse
 import copy
 import csv
+import ctypes
+import ctypes.util
 import datetime
 import fcntl
 import hashlib
@@ -20,6 +22,7 @@ import re
 import shutil
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -384,6 +387,134 @@ class Course:
         return order, expected
 
 
+def zip_compression(item):
+    """Resolve WinZip AES metadata without accepting other encryption schemes."""
+    aes, offset = [], 0
+    while offset + 4 <= len(item.extra):
+        kind, size = struct.unpack_from('<HH', item.extra, offset)
+        data = item.extra[offset + 4:offset + 4 + size]
+        if len(data) != size:
+            raise zipfile.BadZipFile('Truncated extra field')
+        if kind == 0x9901:
+            aes.append(data)
+        offset += 4 + size
+    if item.compress_type == 99 or aes:
+        if item.compress_type != 99 or len(aes) != 1 or len(aes[0]) < 7:
+            raise Issue('UNSUPPORTED_ENCRYPTION', 'AES ZIP 加密資訊缺失、重複或不合法，請重新壓縮')
+        version, vendor, strength, method = struct.unpack_from('<H2sBH', aes[0])
+        if version not in (1, 2) or vendor != b'AE' or strength not in (1, 2, 3) or not item.flag_bits & 1:
+            raise Issue('UNSUPPORTED_ENCRYPTION', '僅支援 WinZip AES AE-1／AE-2 的 128、192、256 位元加密')
+        return method
+    if item.flag_bits & 64:
+        raise Issue('UNSUPPORTED_ENCRYPTION', 'ZIP 使用不支援的強式加密；請使用 ZipCrypto 或 WinZip AES')
+    return item.compress_type
+
+
+def copy_zip_member(destination, item, blocks, total):
+    target = destination / item.filename
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    size = 0
+    with target.open('xb') as out:
+        for block in blocks:
+            size += len(block)
+            total += len(block)
+            if size > MAX_MEMBER or total > MAX_EXPANDED:
+                raise Issue('ZIP_LIMIT', 'ZIP 實際展開大小超過限制')
+            out.write(block)
+    if size != item.file_size:
+        raise Issue('CORRUPT_ZIP', 'ZIP 檔案不完整，請重新壓縮及繳交')
+    return total
+
+
+def libarchive_api():
+    """Load the system library lazily; plain ZIPs do not require libarchive."""
+    pointer, integer, string = ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p
+    signatures = {
+        'archive_read_new': (pointer, []),
+        'archive_read_support_format_zip_seekable': (integer, [pointer]),
+        'archive_read_add_passphrase': (integer, [pointer, string]),
+        'archive_read_open_filename': (integer, [pointer, string, ctypes.c_size_t]),
+        'archive_read_next_header': (integer, [pointer, ctypes.POINTER(pointer)]),
+        'archive_read_data': (ctypes.c_ssize_t, [pointer, pointer, ctypes.c_size_t]),
+        'archive_read_free': (integer, [pointer]),
+        'archive_entry_pathname': (string, [pointer]),
+        'archive_entry_size': (ctypes.c_int64, [pointer]),
+        'archive_entry_filetype': (ctypes.c_uint, [pointer]),
+        'archive_entry_symlink': (string, [pointer]),
+        'archive_entry_hardlink': (string, [pointer]),
+    }
+    try:
+        name = ctypes.util.find_library('archive')
+        if not name:
+            raise OSError('libarchive not found')
+        library = ctypes.CDLL(name)
+        for name, (result, arguments) in signatures.items():
+            function = getattr(library, name)
+            function.restype, function.argtypes = result, arguments
+        return library
+    except (OSError, AttributeError):
+        raise Issue('ENVIRONMENT', '解開 AES ZIP 需要系統 libarchive，請助教確認程式庫可用')
+
+
+def extract_aes(archive_path, destination, password, members):
+    """Decode streams only; libarchive never creates paths or extracts to disk."""
+    if '\0' in password:
+        raise Issue('DECRYPT_FAILED', 'AES ZIP 密碼不可包含空字元，請確認表單密碼')
+    library = libarchive_api()
+    archive = library.archive_read_new()
+    if not archive:
+        raise Issue('ENVIRONMENT', '無法啟動 AES ZIP 解密程式庫，請助教查看環境')
+    expected = {item.filename: item for item in members}
+    seen, total = set(), 0
+    entry = ctypes.c_void_p()
+    buffer = ctypes.create_string_buffer(65536)
+
+    def check(status):
+        if status != 0:
+            raise Issue('DECRYPT_FAILED', '無法解壓 ZIP：可能是壓縮檔損毀或密碼錯誤；請確認表單密碼並通知助教更新 CSV')
+
+    def blocks():
+        while True:
+            size = library.archive_read_data(archive, buffer, len(buffer))
+            if size < 0:
+                check(size)
+            if size == 0:
+                break
+            yield buffer.raw[:size]
+
+    try:
+        check(library.archive_read_support_format_zip_seekable(archive))
+        check(library.archive_read_add_passphrase(archive, password.encode('utf-8')))
+        check(library.archive_read_open_filename(archive, os.fsencode(str(archive_path)), 65536))
+        while True:
+            status = library.archive_read_next_header(archive, ctypes.byref(entry))
+            if status == 1:  # ARCHIVE_EOF
+                break
+            check(status)
+            name = library.archive_entry_pathname(entry)
+            name = name.decode('ascii') if name is not None else ''
+            item = expected.get(name)
+            if item is None or name in seen:
+                raise Issue('UNSAFE_ZIP', 'ZIP 解碼檔名與已驗證的清單不符，請重新壓縮')
+            seen.add(name)
+            kind = stat.S_IFDIR if item.is_dir() else stat.S_IFREG
+            if (library.archive_entry_filetype(entry) != kind
+                    or library.archive_entry_symlink(entry) is not None
+                    or library.archive_entry_hardlink(entry) is not None):
+                raise Issue('UNSAFE_ZIP', 'ZIP 不可包含連結或特殊檔案：' + name[:160])
+            if library.archive_entry_size(entry) != item.file_size:
+                raise Issue('CORRUPT_ZIP', 'ZIP 解碼大小與檔案清單不符，請重新壓縮')
+            if item.is_dir():
+                if next(blocks(), b''):
+                    raise Issue('UNSAFE_ZIP', 'ZIP 資料夾不可包含檔案內容')
+            else:
+                total = copy_zip_member(destination, item, blocks(), total)
+        if seen != set(expected):
+            raise Issue('CORRUPT_ZIP', 'ZIP 缺少已列出的檔案，請重新壓縮')
+    finally:
+        library.archive_read_free(archive)
+
+
 def safe_extract(archive_path, destination, password):
     """Validate every member first, then copy bounded streams; never extractall."""
     destination = Path(destination)
@@ -394,7 +525,7 @@ def safe_extract(archive_path, destination, password):
             if not members or len(members) > MAX_MEMBERS:
                 raise Issue('ZIP_LIMIT', 'ZIP 為空或項目數超過 {}'.format(MAX_MEMBERS))
             seen, plan, declared = set(), [], 0
-            encrypted = False
+            encrypted, aes = False, False
             for item in members:
                 name = item.filename
                 original = getattr(item, 'orig_filename', name)
@@ -412,6 +543,8 @@ def safe_extract(archive_path, destination, password):
                 if kind not in (0, stat.S_IFREG, stat.S_IFDIR) or (kind == stat.S_IFDIR and not item.is_dir()):
                     raise Issue('UNSAFE_ZIP', 'ZIP 不可包含連結或特殊檔案：' + name[:160])
                 if item.is_dir():
+                    if item.file_size != 0:
+                        raise Issue('UNSAFE_ZIP', 'ZIP 資料夾不可包含檔案內容')
                     if parts[0] not in ('RTL_code', 'syn', 'tb') or (parts[0] != 'RTL_code' and len(parts) != 1):
                         raise Issue('INVALID_FORMAT', 'ZIP 根目錄應直接包含 RTL_code、syn、tb，不可再包學號資料夾')
                     continue
@@ -422,10 +555,10 @@ def safe_extract(archive_path, destination, password):
                 if (item.file_size > MAX_MEMBER or declared > MAX_EXPANDED
                         or item.file_size > max(1, item.compress_size) * 1000):
                     raise Issue('ZIP_LIMIT', 'ZIP 展開大小、單一檔案大小或壓縮倍率超過限制')
-                if item.compress_type == 99 or b'\x01\x99' in item.extra:
-                    raise Issue('UNSUPPORTED_ENCRYPTION', '目前不支援 AES ZIP，請改用傳統 ZIP 加密（例如 zip -e）')
-                if item.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED, zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
-                    raise Issue('UNSUPPORTED_COMPRESSION', 'ZIP 使用目前 Python 不支援的壓縮方式')
+                method = zip_compression(item)
+                aes = aes or item.compress_type == 99
+                if method not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED, zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
+                    raise Issue('UNSUPPORTED_COMPRESSION', 'ZIP 使用不支援的壓縮方式')
                 encrypted = encrypted or bool(item.flag_bits & 1)
                 plan.append(item)
             actual_files = {item.filename for item in plan}
@@ -434,24 +567,14 @@ def safe_extract(archive_path, destination, password):
                 raise Issue('MISSING_FILES', '缺少檔案：' + '、'.join(missing))
             if encrypted and not password:
                 raise Issue('PASSWORD_MISSING', 'ZIP 已加密，但 CSV 沒有這個學號的密碼；請確認表單及助教的 CSV')
-            encoded = password.encode('utf-8') if password else None
-            total = 0
-            for item in plan:
-                target = destination / item.filename
-                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                size = 0
-                with archive.open(item, pwd=encoded) as source, target.open('xb') as out:
-                    while True:
-                        block = source.read(65536)
-                        if not block:
-                            break
-                        size += len(block)
-                        total += len(block)
-                        if size > MAX_MEMBER or total > MAX_EXPANDED:
-                            raise Issue('ZIP_LIMIT', 'ZIP 實際展開大小超過限制')
-                        out.write(block)
-                if size != item.file_size:
-                    raise Issue('CORRUPT_ZIP', 'ZIP 檔案不完整，請重新壓縮及繳交')
+            if aes:
+                extract_aes(archive_path, destination, password, members)
+            else:
+                encoded = password.encode('utf-8') if password else None
+                total = 0
+                for item in plan:
+                    with archive.open(item, pwd=encoded) as source:
+                        total = copy_zip_member(destination, item, iter(lambda: source.read(65536), b''), total)
     except Issue:
         raise
     except (zipfile.BadZipFile, RuntimeError, EOFError, ValueError):
