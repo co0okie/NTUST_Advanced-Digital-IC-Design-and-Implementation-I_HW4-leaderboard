@@ -1021,11 +1021,11 @@ a{color:var(--accent);text-underline-offset:4px}a:focus-visible{outline:2px soli
 .wrap{max-width:1520px;margin:auto;padding:38px 40px 30px}.eyebrow{color:var(--muted);font-size:11px;letter-spacing:.19em;text-transform:uppercase}
 header{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:28px}h1{font-size:32px;letter-spacing:-.04em;margin:9px 0 5px;font-weight:600}h1 span{color:var(--muted);font-weight:400}
 .intro,.muted{color:var(--muted)}.intro{margin:0;font-size:13px}
-.boards{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:16px;align-items:start}.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}.featured{border-color:#486357;background:#1b2324}.card-head{padding:22px 22px 17px;border-bottom:1px solid var(--border)}.card-head h2{font-size:17px;margin:0;font-weight:600;letter-spacing:.06em}.featured .card-head h2{color:var(--accent)}
+.boards{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr) minmax(0,1.25fr);gap:16px;align-items:start}.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden}.featured{border-color:#486357;background:#1b2324}.card-head{padding:22px 22px 17px;border-bottom:1px solid var(--border)}.card-head h2{font-size:17px;margin:0;font-weight:600;letter-spacing:.06em}.featured .card-head h2{color:var(--accent)}
 .table-scroll{max-height:540px;overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}th{font-size:11px;color:var(--muted);font-weight:500;white-space:nowrap}th,td{padding:14px 18px;border-bottom:1px solid var(--border)}tbody tr:last-child td{border-bottom:0}.rank-table th:last-child,.rank-table td:last-child{text-align:right}.rank-table td:first-child{width:43px;color:var(--muted)}.rank-table tbody tr:first-child td:first-child{color:var(--accent)}.student,.number{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-variant-numeric:tabular-nums}.student{font-size:12px;white-space:nowrap}.name,.number{white-space:nowrap}.sub{display:block;color:var(--muted);font-size:10px;margin-top:3px;font-family:inherit}.score{font-size:20px;color:var(--accent)}.empty{padding:42px 22px;color:var(--muted);text-align:center;font-size:13px}
 .explain{color:var(--muted);font-size:12px;margin:18px 0 36px;padding-left:2px}.history-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-bottom:14px}.history-head h2{font-size:18px;font-weight:500;margin:0}.history-head p{font-size:12px;color:var(--muted);margin:0}.history{overflow:auto}.history table{min-width:900px}.history td{vertical-align:top}.history td:last-child{max-width:530px;min-width:250px;overflow-wrap:anywhere}.when{white-space:nowrap;font-size:12px;color:var(--muted)}.badge{display:inline-block;font-size:11px;padding:3px 8px;border:1px solid #48505e;border-radius:5px;white-space:nowrap;color:#c4ccd8}.badge.success{color:var(--accent);border-color:#436655;background:#243b31}.badge.error,.badge.interrupted{color:#f0aaa8;border-color:#694442;background:#3b2728}.badge.simulating,.badge.synthesizing,.badge.validating{color:#e6cc94;border-color:#665a40}.message{font-size:12px}
 .notice{padding:14px 18px;border:1px solid #756346;background:#302a21;border-radius:8px;color:#e9d4aa;margin:0 0 24px;font-size:13px}.footer{display:flex;justify-content:space-between;gap:18px;margin-top:24px;color:var(--muted);font-size:11px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
-@media(min-width:1100px){.rank-table th,.rank-table td{padding-left:12px;padding-right:12px}}
+@media(min-width:1100px){.rank-table th,.rank-table td{padding-left:10px;padding-right:10px}}
 @media(max-width:1100px){.wrap{padding:26px 22px}.boards{grid-template-columns:1fr;gap:16px}.card-head{padding:17px 13px}.rank-table th,.rank-table td{padding:12px 9px}}
 @media(max-width:760px){.wrap{padding:24px 16px}header{display:block}h1{font-size:28px}.boards{grid-template-columns:1fr;gap:16px}.card-head{padding:19px}.rank-table th,.rank-table td{padding:14px 8px}.student,.name{font-size:12px}.table-scroll{max-height:380px}.history-head,.footer{display:block}.history-head p{margin-top:4px}.footer span{display:block;margin:5px 0}}
 """
@@ -1040,26 +1040,28 @@ def formatted(value, decimals=0):
 
 
 def rank_card(kind, records):
-    labels = {'area': ('AREA', '面積 · μm²'),
-              'overall': ('OVERALL', '名次總和'),
-              'speed': ('INTERVAL', 'INTERVAL · cycles')}
-    title, heading = labels[kind]
+    labels = {'overall': ('OVERALL', ('面積名次', '速度名次', '名次總和')),
+              'area': ('AREA', ('面積 · μm²',)),
+              'speed': ('INTERVAL', ('INTERVAL · cycles', 'FPS'))}
+    title, headings = labels[kind]
     key = {'area': 'area_rank', 'overall': 'overall_rank', 'speed': 'speed_rank'}[kind]
     rows = []
     for record in sorted(records, key=lambda r: (r[key], r['student_id'])):
         student = escaped(record['student_id'])
         name = escaped(STUDENT_NAMES.get(record['student_id'], '—'))
         if kind == 'area':
-            value = formatted(record['area'], 3)
+            values = [formatted(record['area'], 3)]
         elif kind == 'speed':
-            value = formatted(record['interval']) + '<span class="sub">' + formatted(record['fps'], 3) + ' FPS</span>'
+            values = [formatted(record['interval']), formatted(record['fps'], 3)]
         else:
-            student += '<span class="sub">面積 #{} · 速度 #{}</span>'.format(record['area_rank'], record['speed_rank'])
-            value = '<span class="score">{}</span>'.format(record['rank_sum'])
-        rows.append('<tr><td class="number">{}</td><td class="student">{}</td><td class="name">{}</td><td class="number">{}</td></tr>'.format(record[key], student, name, value))
+            values = [formatted(record['area_rank']), formatted(record['speed_rank']),
+                      '<span class="score">{}</span>'.format(record['rank_sum'])]
+        rows.append('<tr><td class="number">{}</td><td class="student">{}</td><td class="name">{}</td>'.format(record[key], student, name)
+                    + ''.join('<td class="number">' + value + '</td>' for value in values) + '</tr>')
     body = ('<div class="table-scroll" data-scroll="' + kind + '"><table class="rank-table"><caption class="sr-only">' + title
-            + '</caption><thead><tr><th>排名</th><th>學號</th><th>名稱</th><th>' + heading
-            + '</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>') if rows else '<div class="empty">等待第一筆通過的成績</div>'
+            + '</caption><thead><tr><th>排名</th><th>學號</th><th>名稱</th>'
+            + ''.join('<th>' + heading + '</th>' for heading in headings)
+            + '</tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>') if rows else '<div class="empty">等待第一筆通過的成績</div>'
     return ('<section class="card ' + ('featured' if kind == 'overall' else '') + '"><div class="card-head"><h2>'
             + title + '</h2></div>' + body + '</section>')
 
@@ -1074,18 +1076,18 @@ def render_content(data):
         if record.get('error_code') in PASSWORD_ERRORS:
             message += ' <a href="' + FORM_URL + '" target="_blank" rel="noopener noreferrer">確認密碼表單 ↗</a>'
         history_rows.append('<tr><td class="when" title="{}">{}</td><td class="student">{}<span class="sub">{}</span></td>'
-                            '<td><span class="badge {}">{}</span></td><td class="number">{}<span class="sub">{} cycles</span></td>'
+                            '<td><span class="badge {}">{}</span></td><td class="number">{}</td><td class="number">{}</td>'
                             '<td class="message" title="{}">{}</td></tr>'.format(
                                 escaped(received), escaped(when), escaped(record.get('student_id') or record['filename']),
                                 escaped(record.get('uploader', '')), escaped(state), escaped(STATUS_TEXT.get(state, state)),
                                 formatted(record.get('area'), 3), formatted(record.get('interval')), escaped(record['id']), message))
     history = ('<table><caption class="sr-only">最新 100 筆繳交紀錄</caption><thead><tr><th>收件時間</th><th>學號 / 檔案擁有者</th>'
-               '<th>狀態</th><th>面積 / INTERVAL</th><th>說明</th></tr></thead><tbody>' + ''.join(history_rows) + '</tbody></table>') if history_rows else '<div class="empty">尚無繳交紀錄。檔案穩定後將自動開始檢查。</div>'
+               '<th>狀態</th><th>面積 · μm²</th><th>INTERVAL · cycles</th><th>說明</th></tr></thead><tbody>' + ''.join(history_rows) + '</tbody></table>') if history_rows else '<div class="empty">尚無繳交紀錄。檔案穩定後將自動開始檢查。</div>'
     notice = '<div class="notice" role="status">' + escaped(data['notice']) + '</div>' if data.get('notice') else ''
     return ('<header><div><div class="eyebrow">NTUST / Advanced Digital IC Design</div><h1>HW4 <span>／</span> 即時排行榜</h1>'
             '<p class="intro">BloodMNIST CNN 硬體實作 · 公開測資排行榜</p></div></header>' + notice
             + '<div class="boards">'
-            + ''.join(rank_card(k, data['rankings']) for k in ('area', 'overall', 'speed')) + '</div>'
+            + ''.join(rank_card(k, data['rankings']) for k in ('overall', 'area', 'speed')) + '</div>'
             '<p class="explain">總排名依面積名次與速度名次之和計算，同分共用名次（1、1、3）。每位同學採最近一次成功成績，需公開測資 8/8 與合成皆通過才入榜。</p>'
             '<div class="history-head"><h2>繳交紀錄</h2><p>最新 100 筆 · 失敗繳交不覆蓋上一筆成功成績</p></div>'
             '<section class="card history" id="history" data-scroll="history">' + history + '</section><footer class="footer">'
