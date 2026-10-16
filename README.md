@@ -22,7 +22,7 @@ python3 leaderboard.py --watch-dir /path/to/submissions --password-csv /path/to/
 | --- | --- |
 | `--watch-dir` | 必填；助教指定的繳交目錄，只掃描這一層的 ZIP |
 | `--password-csv` | 必填；助教的密碼 CSV |
-| `--json-dir` | 成績與診斷資料；預設與 `.py` 同目錄 |
+| `--data-dir` | 成績 JSON、鎖定檔及私有評分資料；預設與 `.py` 同目錄 |
 | `--port` | 預設 `8000`，僅監聽 `127.0.0.1` |
 | `--course-dir` | 官方資源目錄；預設 `/home/Project4` |
 
@@ -32,12 +32,12 @@ python3 leaderboard.py --watch-dir /path/to/submissions --password-csv /path/to/
 python3 leaderboard.py \
   --watch-dir /path/to/submissions \
   --password-csv /path/to/passwords.csv \
-  --json-dir /path/to/leaderboard-data \
+  --data-dir /path/to/leaderboard-data \
   --course-dir /path/to/approved-course-files \
   --port 8000
 ```
 
-JSON 目錄必須由執行帳號擁有，且不可讓群組／其他帳號寫入。程式會建立它。
+資料目錄必須由執行帳號擁有，且不可讓群組／其他帳號寫入。程式會建立它。
 按 Ctrl+C 或傳送 SIGTERM 停止；下次啟動會恢復尚有私有 ZIP 快照的未完成工作。
 
 ## 正式執行的資料與 log
@@ -50,7 +50,7 @@ mkdir -p runtime/logs
 nohup python3 leaderboard.py \
   --watch-dir /path/to/submissions \
   --password-csv /path/to/passwords.csv \
-  --json-dir runtime/data \
+  --data-dir runtime/data \
   > runtime/logs/service.log 2>&1 &
 ```
 
@@ -63,9 +63,9 @@ runtime/
     submissions/
 ```
 
-`results.lock` 透過作業系統的 `flock` 防止兩個程序同時修改同一個 JSON 目錄。
+`results.lock` 透過作業系統的 `flock` 防止兩個程序同時修改同一個資料目錄。
 關閉程式或程序結束時鎖定自動釋放；空的 lock 檔會保留，檔案存在不代表服務仍在執行。
-若省略 `--json-dir`，為維持原有介面，相同資料仍預設放在 `.py` 旁。
+若省略 `--data-dir`，資料預設放在 `.py` 旁。
 
 ## 官方資源與評分環境
 
@@ -88,7 +88,7 @@ repo 已將原始資料包解開到 `tb/`，並保存課程 server 的 Tcl、DC 
 排行榜正式使用的基準仍須由助教確認；開發帳號的私人測試副本不代表已核准正式部署。
 
 程式啟動時把資源讀進記憶體並計算 SHA256；每次工作使用相同內容。
-若新的基準與既有成績版本不同，拒絕混用，請選新的 `--json-dir`。
+若新的基準與既有成績版本不同，拒絕混用，請選新的 `--data-dir`。
 官方 `.f` 中引用的 TSMC SRAM 模型，以及 DC 的標準元件／SRAM library，仍須在 server 可用。
 
 評分以 `tcsh -c` 載入課程工具環境，分別呼叫：
@@ -169,7 +169,7 @@ OVERALL 的面積名次、速度名次、名次總和各自成欄；INTERVAL 與
 服務重啟後仍保留成績，工作檔清除且診斷報告保留。
 
 ```text
-JSON 目錄/
+資料目錄/
   results.json                       # 原子更新，644；全部紀錄與排名
   results.lock                       # 防止同目錄重複啟動
   submissions/                       # 700，HTTP 不提供這個目錄

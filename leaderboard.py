@@ -699,22 +699,22 @@ def read_passwords(path):
 
 
 class Board:
-    def __init__(self, watch_dir, password_csv, json_dir, course_dir):
+    def __init__(self, watch_dir, password_csv, data_dir, course_dir):
         self.watch_dir = Path(watch_dir).resolve()
         self.password_csv = Path(password_csv).resolve()
-        self.json_dir = Path(json_dir).resolve()
+        self.data_dir = Path(data_dir).resolve()
         if not self.watch_dir.is_dir():
             raise Issue('SETUP', '監看目錄不存在：' + str(self.watch_dir))
-        protected_directory(self.json_dir, 0o755)
-        self.private = self.json_dir / 'submissions'
+        protected_directory(self.data_dir, 0o755)
+        self.private = self.data_dir / 'submissions'
         protected_directory(self.private, 0o700)
-        self.lock_handle = open(str(self.json_dir / 'results.lock'), 'a')
-        os.chmod(str(self.json_dir / 'results.lock'), 0o600)
+        self.lock_handle = open(str(self.data_dir / 'results.lock'), 'a')
+        os.chmod(str(self.data_dir / 'results.lock'), 0o600)
         try:
             fcntl.flock(self.lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             self.lock_handle.close()
-            raise Issue('SETUP', '同一 JSON 目錄已有排行榜程式執行中')
+            raise Issue('SETUP', '同一資料目錄已有排行榜程式執行中')
         try:
             self.course = Course(course_dir)
             self.passwords, self.csv_revision = read_passwords(self.password_csv)
@@ -726,14 +726,14 @@ class Board:
             self.tasks = queue.Queue()
             self.notices = {}
             self.history = []
-            path = self.json_dir / 'results.json'
+            path = self.data_dir / 'results.json'
             if path.exists():
                 try:
                     previous = json.loads(read_regular(path).decode('utf-8'))
                     if previous.get('schema_version') != 1 or not isinstance(previous.get('history'), list):
                         raise ValueError()
                     if previous.get('course_hash') != self.course.digest:
-                        raise Issue('SETUP', '官方基準與現有成績版本不同，請改用新的 JSON 目錄，避免混合排名')
+                        raise Issue('SETUP', '官方基準與現有成績版本不同，請改用新的資料目錄，避免混合排名')
                     self.history = previous['history']
                     for record in self.history:
                         if not JOB_ID.fullmatch(record['id']):
@@ -776,7 +776,7 @@ class Board:
     def _save_locked(self):
         payload = self._payload_locked()
         payload['revision'] = uuid.uuid4().hex
-        atomic_json(self.json_dir / 'results.json', payload)
+        atomic_json(self.data_dir / 'results.json', payload)
         self.payload = payload
         self.changed.notify_all()
 
@@ -1234,7 +1234,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='HW4 暗色排行榜：監看 ZIP、評分、HTTP 網頁，零額外 Python 套件')
     parser.add_argument('--watch-dir', required=True, type=Path, help='助教指定的 ZIP 繳交目錄（僅監看此層）')
     parser.add_argument('--password-csv', required=True, type=Path, help='含「學號」「密碼」欄位、權限 600 的 CSV')
-    parser.add_argument('--json-dir', type=Path, default=Path(__file__).resolve().parent, help='成績及私有診斷目錄，預設與本程式同目錄')
+    parser.add_argument('--data-dir', type=Path, default=Path(__file__).resolve().parent, help='成績 JSON、鎖定檔及私有評分資料目錄，預設與本程式同目錄')
     parser.add_argument('--port', type=int, default=8000, help='HTTP port，預設 8000，綁定 127.0.0.1')
     parser.add_argument('--course-dir', type=Path, default=Path('/home/Project4'), help='助教核准的官方資源目錄，預設 /home/Project4')
     args = parser.parse_args(argv)
@@ -1250,7 +1250,7 @@ def main(argv=None):
     previous_sigterm = signal.signal(signal.SIGTERM, terminate)
     try:
         os.umask(0o077)
-        board = Board(args.watch_dir, args.password_csv, args.json_dir, args.course_dir)
+        board = Board(args.watch_dir, args.password_csv, args.data_dir, args.course_dir)
         server = make_server(board, args.port)
         threads = [threading.Thread(target=Watcher(board).run, name='watcher', daemon=True),
                    threading.Thread(target=worker_loop, args=(board, ToolRunner()), name='grader', daemon=True)]
