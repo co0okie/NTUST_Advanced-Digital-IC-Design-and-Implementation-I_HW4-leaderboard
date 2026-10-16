@@ -526,7 +526,17 @@ def one_number(pattern, text, description):
     return value
 
 
+def license_unavailable(text):
+    # DC can return zero after compile_ultra fails, then still print reports.
+    # Match explicit checkout failures, leaving ordinary Error counts diagnostic.
+    return re.search(r'^\s*(?:(?:Error|Fatal):\s*)?(?:.*\(SEC-12\)|'
+                     r'(?:Failed|Unable|Cannot) to (?:obtain|get|check\s*out)\b.*\blicen[cs]e\b|'
+                     r'Licen[cs]e\s+checkout\s+(?:failed|failure)\b)', text, re.I | re.M)
+
+
 def parse_synthesis(log, area_report, timing_report, latch_report):
+    if license_unavailable(log):
+        raise Issue('ENVIRONMENT', '合成工具無法取得授權，未完成合成；請助教查看 syn.log')
     errors = len(re.findall('Error', log))
     if re.search(r'^\s*(?:ERROR:|Fatal:)', log, re.M):
         raise Issue('SYN_FAILED', 'syn.log 含有 ERROR 或 Fatal 訊息；請查看合成 log')
@@ -551,6 +561,8 @@ def parse_synthesis(log, area_report, timing_report, latch_report):
     reported = re.findall(r'Total cell area\s*:\s*(' + NUMBER + ')', area_report)
     if area <= 0 or not reported or not all(math.isfinite(float(v)) and float(v) > 0 for v in reported):
         raise Issue('SYN_REPORT', 'area.rpt 或總面積統計缺失／不合法')
+    if not math.isclose(area, float(reported[0]), rel_tol=0.0001, abs_tol=0.02):
+        raise Issue('SYN_REPORT', '總面積與 area.rpt 不符，可能是面積加總中途停止；請助教查看合成報告')
     return {'area': area, 'reported_area': float(reported[0]), 'slack': slack,
             'sram_macros': int(macros), 'synthesis_error_count': errors}
 
@@ -615,8 +627,10 @@ class ToolRunner:
                             raise Issue('RESOURCE_LIMIT', '評分工作檔超過 2 GiB，已終止評分')
                 if log_path.stat().st_size > MAX_LOG:
                     raise Issue('RESOURCE_LIMIT', '工具 log 超過 16 MiB')
+                message = log_path.read_text(encoding='utf-8', errors='replace')[:MAX_LOG]
+                if license_unavailable(message):
+                    raise Issue('ENVIRONMENT', '評分工具無法取得授權，未完成評分；請助教查看 ' + log_path.name)
                 if process.returncode:
-                    message = log_path.read_text(encoding='utf-8', errors='replace')[:MAX_LOG]
                     # Login startup may report unrelated missing EDA directories
                     # before VCS successfully starts. Those lines must not hide
                     # the actual compiler error later in the log.

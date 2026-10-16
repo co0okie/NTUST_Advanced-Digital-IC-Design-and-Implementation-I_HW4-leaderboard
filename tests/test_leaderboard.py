@@ -254,6 +254,12 @@ class ValidationTests(unittest.TestCase):
         self.assertIssue('SYN_SRAM', lb.parse_synthesis,
                          log.replace('SRAM macros : 5', 'SRAM macros : 0'), AREA, TIMING, LATCH)
 
+    def test_license_failure_and_partial_area_cannot_rank(self):
+        diagnostic = "Error: Can't communicate with the license server. (SEC-12)\n"
+        self.assertIssue('ENVIRONMENT', lb.parse_synthesis, diagnostic + SYN_LOG, AREA, TIMING, LATCH)
+        self.assertIssue('SYN_REPORT', lb.parse_synthesis,
+                         SYN_LOG.replace('12345.678', '31789.625'), 'Total cell area: 54496.5\n', TIMING, LATCH)
+
     def test_error_count_is_diagnostic_only(self):
         summary = '\n'.join(SYN_LOG.splitlines()[2:])
         for count in (0, 1, 2, 3):
@@ -693,6 +699,16 @@ class IntegrationTests(unittest.TestCase):
                 with self.assertRaises(lb.Issue) as raised:
                     runner.execute(command, self.root, self.root / 'diagnostic.log', 3, threading.Event())
                 self.assertEqual(raised.exception.code, expected)
+
+    def test_license_error_is_rejected_even_with_zero_exit(self):
+        runner = lb.ToolRunner()
+        for message in ("Error: Can't communicate with the license server. (SEC-12)\n",
+                        'Failed to obtain license ...\n', 'License checkout failed.\n'):
+            with self.subTest(message=message):
+                command = [sys.executable, '-c', 'import sys; sys.stdout.write({!r})'.format(message)]
+                with self.assertRaises(lb.Issue) as raised:
+                    runner.execute(command, self.root, self.root / 'license.log', 3, threading.Event())
+                self.assertEqual(raised.exception.code, 'ENVIRONMENT')
 
 
 if __name__ == '__main__':
