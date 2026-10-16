@@ -36,7 +36,7 @@ def make_cases(baseline, encrypted, output):
         files = {item.filename: archive.read(item) for item in archive.infolist() if not item.is_dir()}
     required = ('RTL_code/cnn_top.v', 'syn/syn.tcl', 'tb/rtl_sim.f', 'tb/setting.vh')
     if set(files) != set(required):
-        raise ValueError('Use the four-file baseline from tools/package_submission.py')
+        raise ValueError('Use the four-file baseline from the HW4 repo tools/package_submission.py')
     tcl = files['syn/syn.tcl'].decode('utf-8-sig')
     flist = files['tb/rtl_sim.f'].decode('utf-8-sig')
     if '../RTL_code/cnn_top.v' not in tcl or 'set CLK_PERIOD 4.0' not in tcl:

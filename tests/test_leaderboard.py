@@ -19,7 +19,6 @@ HERE = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location('leaderboard_app', str(HERE.parent / 'leaderboard.py'))
 lb = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(lb)
-TEST_DATA = HERE.parent.parent / 'tb'
 
 TCL = ('# official test fixture, not a replacement for the TA script\n'
        'set TOP cnn_top\n'
@@ -51,10 +50,22 @@ def write_zip(path, files):
 
 def make_course(root):
     root.mkdir()
-    for source in [TEST_DATA / 'tb_simple.v'] + sorted((TEST_DATA / 'export').rglob('*.hex')):
-        target = root / source.relative_to(TEST_DATA)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(source.read_bytes())
+    # Synthetic course resources for FakeRunner; no sibling HW repo or EDA tools.
+    (root / 'tb_simple.v').write_text(
+        'module tb_simple; parameter N_IMG = 8; real CYCLE = 10.0; endmodule\n',
+        encoding='ascii')
+    data = root / 'export/tb'
+    data.mkdir(parents=True)
+    pixels = [(image * 29 + pixel) % 256 for image in range(8) for pixel in range(2352)]
+    (data / 'images.hex').write_text(''.join('{:02x}\n'.format(v) for v in pixels), encoding='ascii')
+    (data / 'pred.hex').write_text(''.join('{:02x}\n'.format(v) for v in range(8)), encoding='ascii')
+    weights = root / 'export/weights'
+    weights.mkdir()
+    for offset, (name, count) in enumerate(sorted(lb.WEIGHTS.items())):
+        width = 8 if name.endswith('_b') else 2
+        (weights / (name + '.hex')).write_text(
+            ''.join('{:0{}x}\n'.format((i + offset) % 256, width) for i in range(count)),
+            encoding='ascii')
     (root / 'syn.tcl').write_text(TCL, encoding='utf-8')
     (root / 'rtl_sim.f').write_text(FLIST, encoding='utf-8')
     (root / '.synopsys_dc.setup').write_text('set search_path .\n', encoding='ascii')

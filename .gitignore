@@ -5,3 +5,6 @@ results.json
 results.lock
 submissions/
 runtime/
+build/
+dist/
+*.log

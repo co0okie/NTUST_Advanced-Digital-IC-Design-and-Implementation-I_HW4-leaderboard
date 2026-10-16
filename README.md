@@ -3,6 +3,8 @@
 單一 Python 程式，包含目錄監看、ZIP 驗證、VCS/DC 評分、JSON 紀錄及暗色網頁。
 Python **3.6.8 以上**，僅標準函式庫，不用安裝套件。HTML 與少量 JavaScript 都由同一個 `.py` 提供。
 
+作業 RTL 與原始課程資料位於 [HW4 repo](https://github.com/co0okie/NTUST_Advanced-Digital-IC-Design-and-Implementation-I_HW4)。本 repo 僅包含排行榜與其測試。
+
 ## 啟動
 
 ```sh
@@ -84,7 +86,7 @@ export/
 ```
 
 這些是**助教核准的基準**，應放在學生不能修改的位置。不能拿學生 ZIP 當基準。
-repo 已將原始資料包解開到 `tb/`，並保存課程 server 的 Tcl、DC setup 和 `.f` 於 `syn/`、`tb/`。
+原始資料包、RTL 與課程腳本保存在上述 HW4 repo；本 repo 不包含它們。
 排行榜正式使用的基準仍須由助教確認；開發帳號的私人測試副本不代表已核准正式部署。
 
 程式啟動時把資源讀進記憶體並計算 SHA256；每次工作使用相同內容。
@@ -196,18 +198,18 @@ OVERALL 的面積名次、速度名次、名次總和各自成欄；INTERVAL 與
 從 repo 根目錄執行：
 
 ```sh
-python3 -m unittest discover -s leaderboard/tests -v
+python3 -m unittest discover -s tests -v
 ```
 
-測試使用 `tb/` 內的原始資料，官方 Tcl／工具輸出以測試 fixture 代替，不會呼叫課程 server 或改動原測資。
+測試自行產生圖片、答案、權重及課程腳本 fixture，以測試用工具輸出驗證評分流程；不依賴 HW4 repo，不會呼叫 VCS/DC 或課程 server。
 `tests/fixtures/encrypted.zip` 為合成測試資料，密碼是 `test-password`，用來實測傳統 ZIP 加密。
 已在課程 server 使用初版 CNN 驗證真實 VCS、TSMC SRAM model、DC、報告解析、排名與缺檔錯誤流程。
-排行榜測試也已在 Python 3.6.8 通過，包含 SSE 多人連線、斷線補資料及私有檔案存取檢查；完整 RTL 驗證結果見 [專案說明](../README.md)。
+排行榜測試也已在 Python 3.6.8 通過，包含 SSE 多人連線、斷線補資料及私有檔案存取檢查；完整 RTL 驗證結果見 [HW4 專案說明](https://github.com/co0okie/NTUST_Advanced-Digital-IC-Design-and-Implementation-I_HW4)。
 
-另可產生 36 筆刻意錯誤的繳交，供自己的測試目錄驗證完整收件流程：
+另可使用 HW4 repo 的 `tools/package_submission.py` 產生基準 ZIP，再產生 36 筆刻意錯誤的繳交，供自己的測試目錄驗證完整收件流程：
 
 ```sh
-python3 leaderboard/tests/make_error_cases.py dist/M11000001.zip build/leaderboard-error-cases
+python3 tests/make_error_cases.py /path/to/M11000001.zip build/leaderboard-error-cases
 ```
 
 輸出目錄必須尚未存在；`incoming/` 是測試 ZIP，`manifest.json` 列出預期錯誤，
